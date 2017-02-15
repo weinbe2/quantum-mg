@@ -415,11 +415,42 @@ public:
     // Need functions to apply M_{clover}, M_{eo}, M_{oe}, M_{twolink}, M_{corner}, M_{shift}
     //   and, of course, all. 
     // void apply_M_clover(complex<double>* lhs, complex<double>* rhs);
-    // void apply_M_eo(complex<double>* lhs, complex<double>* rhs);
+
+    // Apply the eo part of the stencil.
+    void apply_M_eo(complex<double>* lhs, complex<double>* rhs)
+    {
+      
+    }
     // void apply_M_oe(complex<double>* lhs, complex<double>* rhs);
     // void apply_M_twolink(complex<double>* lhs, complex<double>* rhs);
     // void apply_M_corner(complex<double>* lhs, complex<double>* rhs);
-    // void apply_M_shift(complex<double>* lhs, complex<double>* rhs);
+    
+    // Apply the shifts (think a mass term, maybe with signs a la \gamma_5 D)
+    void apply_M_shift(complex<double>* lhs, complex<double>* rhs)
+    {
+      // Get size of a LatticeColorVector
+      int cv = lat->get_size_cv();
+
+      // Apply shift and eo_shift to even sites.
+      caxpy(shift+shift_eo, rhs, lhs, cv/2);
+
+      // Apply shift and eo_shift to odd sites.
+      caxpy(shift-shift_eo, rhs+cv/2, lhs+cv/2, cv/2);
+
+      // There's no good way to do the dof shift with the current mem layout...
+      if (shift_dof != 0.0 && lat->get_nc() % 2 == 0) // is shift_dof valid?
+      {
+        int nc = lat->get_nc();
+        for (int c = 0; c < nc/2; c++)
+        {
+          // Shift top half of degrees of freedom by shift_dof.
+          caxpy_stride(shift_dof, rhs, lhs, lat->get_size_cv(), c, nc);
+
+          // Shift bottom half of degrees of freedom by -shift_dof.
+          caxpy_stride(-shift_dof, rhs, lhs, lat->get_size_cv(), c+nc/2, nc);
+        }
+      }
+    }
     // void apply_M(complex<double>* lhs, complex<double>* rhs); 
       
     // Need functions to build dagger of a stencil from another stencil,
