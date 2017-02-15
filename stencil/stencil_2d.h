@@ -7,27 +7,9 @@
 #include <iostream>
 #include <complex>
 #include "../lattice/lattice.h"
-#include "../blas/generic_vector.h"
-
-// Enum for all possible stencil directions.
-// Largely used for generating additional refinements.
-enum stencil_dir
-{
-  QMG_DIR_ALL = 0, // default, full stencil.
-  QMG_DIR_0 = 1,   // clover
-  QMG_DIR_XP1 = 2, // +x
-  QMG_DIR_YP1 = 3, // +y
-  QMG_DIR_XM1 = 4, // -x
-  QMG_DIR_YM1 = 5, // -y
-  QMG_DIR_XP2 = 6, // +2x
-  QMG_DIR_XP1YP1 = 10, // +x+y
-  QMG_DIR_YP2 = 7, // +2y
-  QMG_DIR_XM1YP1 = 11, // -x+y
-  QMG_DIR_XM2 = 8, // -2x
-  QMG_DIR_XM1YM1 = 12, // -x-y
-  QMG_DIR_YM2 = 9, // -2y
-  QMG_DIR_XP1YM1 = 13, // +x-y
-};
+#include "blas/generic_vector.h"
+#include "blas/generic_local_matrix.h"
+#include "../cshift/cshift_2d.h"
 
 // Indexing offset of, for ex, XP1, is
 // lat->get_size_cm() * QMG_DIR_INDEX_XP1.
@@ -417,10 +399,8 @@ public:
     // void apply_M_clover(complex<double>* lhs, complex<double>* rhs);
 
     // Apply the eo part of the stencil.
-    void apply_M_eo(complex<double>* lhs, complex<double>* rhs)
-    {
-      
-    }
+    //void apply_M_eo(complex<double>* lhs, complex<double>* rhs)
+    
     // void apply_M_oe(complex<double>* lhs, complex<double>* rhs);
     // void apply_M_twolink(complex<double>* lhs, complex<double>* rhs);
     // void apply_M_corner(complex<double>* lhs, complex<double>* rhs);

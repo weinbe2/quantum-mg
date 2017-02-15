@@ -69,6 +69,17 @@ public:
   {
     return coord_to_index(coord[0], coord[1]);
   }
+
+  // Switch from an (x,y,dof) coordinate to an even-odd partitioned index.
+  inline int dof_coord_to_index(int total_dof, int x, int y, int dof)
+  {
+    return total_dof*coord_to_index(x, y) + dof;
+  }
+  
+  inline int dof_coord_to_index(int total_dof, int* coord, int dof)
+  {
+    return dof_coord_to_index(total_dof, coord[0], coord[1], dof);
+  }
   
   // Switch from an (x,y,nc) coordinate to an even-odd partitioned index.
   inline int cv_coord_to_index(int x, int y, int c)
@@ -140,6 +151,18 @@ public:
   inline void index_to_coord(int i, int* coord)
   {
     index_to_coord(i, coord[0], coord[1]);
+  }
+
+  // Switch from an arbitrary dof index to an x,y,dof coordinate.
+  inline void dof_index_to_coord(int i, int total_dof, int &x, int& y, int& dof)
+  {
+    index_to_coord(i / total_dof, x, y);
+    dof = i % total_dof;
+  }
+  
+  inline void dof_index_to_coord(int i, int total_dof, int* coord, int& dof)
+  {
+    dof_index_to_coord(i, total_dof, coord[0], coord[1], dof);
   }
   
   // Switch from a color vector index to an x,y,c coordinate.
@@ -279,6 +302,11 @@ public:
     return volume;
   }
   
+  inline int get_size_dof(int total_dof)
+  {
+    return volume*total_dof; 
+  }
+
   inline int get_size_cv()
   {
     return size_cv;
