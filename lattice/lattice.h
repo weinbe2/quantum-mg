@@ -29,8 +29,10 @@ private:
 public:
   
   Lattice2D(int xlen, int ylen, int my_nc)
-    : dims[0](xlen), dims[1](ylen), nc(my_nc)
+    : nc(my_nc)
   {
+    dims[0] = xlen;
+    dims[1] = ylen;
     volume = dims[0]*dims[1];
     size_cv = volume*nc;
     size_cm = size_cv*nc;
@@ -40,8 +42,10 @@ public:
   }
   
   Lattice2D(const Lattice2D& copy)
-    : dims[0](copy.dims[0]), dims[1](copy.dims[1]), nc(copy.nc)
+    : nc(copy.nc)
   {
+    dims[0] = copy.dims[0];
+    dims[1] = copy.dims[1];
     volume = dims[0]*dims[1];
     size_cv = volume*nc;
     size_cm = size_cv*nc;
@@ -50,7 +54,7 @@ public:
     size_corner = size_gauge*2; 
   }
   
-  ~Lattice()
+  ~Lattice2D()
   {  }
   
   /////////////////////////////////////////////////
@@ -106,7 +110,7 @@ public:
   // Switch from an (x,y,nc,nc,mu) coordinate to an even-odd partitioned index
   inline int gauge_coord_to_index(int x, int y, int c1, int c2, int mu)
   {
-    return mu*size_gauge + cv_coord_to_index(x,y,c1,c2);
+    return mu*size_gauge + cm_coord_to_index(x,y,c1,c2);
   }
   
   inline int gauge_coord_to_index(int* coord, int c1, int c2, int mu)
@@ -117,7 +121,7 @@ public:
   // Switch from an (x,y,nc,nc,\pm mu) coordinate to an even-odd partition index.
   inline int hopping_coord_to_index(int x, int y, int c1, int c2, int mu)
   {
-    return mu*size_gauge + cv_coord_to_index(x,y,c1,c2);
+    return mu*size_gauge + cm_coord_to_index(x,y,c1,c2);
   }
   
   inline int hopping_coord_to_index(int* coord, int c1, int c2, int mu)
@@ -128,7 +132,7 @@ public:
   // Switch from an (x,y,nc,nc,munu) coordinate to an even-odd partition index.
   inline int corner_coord_to_index(int x, int y, int c1, int c2, int munu)
   {
-    return munu*size_gauge + cv_coord_to_index(x,y,c1,c2);
+    return munu*size_gauge + cm_coord_to_index(x,y,c1,c2);
   }
   
   inline int corner_coord_to_index(int* coord, int c1, int c2, int munu)
@@ -184,7 +188,7 @@ public:
     c2 = i % nc;
   }
   
-  inline void cm_index_to_coord(int i, int& coord, int& c1, int& c2)
+  inline void cm_index_to_coord(int i, int* coord, int& c1, int& c2)
   {
     cm_index_to_coord(i, coord[0], coord[1], c1, c2);
   }
@@ -196,7 +200,7 @@ public:
     cm_index_to_coord(i - mu*size_gauge, x, y, c1, c2);
   }
   
-  inline void gauge_index_to_coord(int i, int& coord, int& c1, int& c2, int& mu)
+  inline void gauge_index_to_coord(int i, int* coord, int& c1, int& c2, int& mu)
   {
     gauge_index_to_coord(i, coord[0], coord[1], c1, c2, mu);
   }
@@ -208,7 +212,7 @@ public:
     cm_index_to_coord(i - mu*size_gauge, x, y, c1, c2);
   }
   
-  inline void hopping_index_to_coord(int i, int& coord, int& c1, int& c2, int& mu)
+  inline void hopping_index_to_coord(int i, int* coord, int& c1, int& c2, int& mu)
   {
     hopping_index_to_coord(i, coord[0], coord[1], c1, c2, mu);
   }
@@ -220,7 +224,7 @@ public:
     cm_index_to_coord(i - munu*size_gauge, x, y, c1, c2);
   }
   
-  inline void corner_index_to_coord(int i, int& coord, int& c1, int& c2, int& munu)
+  inline void corner_index_to_coord(int i, int* coord, int& c1, int& c2, int& munu)
   {
     corner_index_to_coord(i, coord[0], coord[1], c1, c2, munu);
   }

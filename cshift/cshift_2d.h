@@ -36,18 +36,20 @@ enum qmg_eo
 };
 
 // cshift function from even.
-template<typename T> void cshift_from_even(T* lhs, T* rhs, qmg_shift_dir cdir, int dof_per_site, Lattice2D* lat)
+template<typename T> void cshift_from_even(T* lhs, T* rhs, qmg_cshift_dir cdir, int dof_per_site, Lattice2D* lat)
 {
+  int dof = dof_per_site;
+  
   int half_size = lat->get_volume()/2;
-  int half_size_dof = half_size*dof;
+  int half_size_dof = half_size*dof_per_site;
 
   int half_rowsize = lat->get_dim_mu(0)/2;
-  int half_rowsize_dof = half_rowsize*dof; 
+  int half_rowsize_dof = half_rowsize*dof_per_site; 
   switch (cdir)
   {
     case QMG_CSHIFT_FROM_0:
       // I mean, this is silly.
-      copy(lhs, rhs, half_size);
+      copy_vector(lhs, rhs, half_size);
       break;
     case QMG_CSHIFT_FROM_XP1:
       // Loop over double rows in y.
@@ -80,9 +82,7 @@ template<typename T> void cshift_from_even(T* lhs, T* rhs, qmg_shift_dir cdir, i
 
         // Odd y row boundary. Becomes MPI.
         for (int j = 0; j < dof; j++)
-        {
-          lhs[half_size_dof + i + j] = rhs[i + 2*half_rowsize_dof - dof + j];
-        }
+          lhs[half_size_dof + i + half_rowsize_dof + j] = rhs[i + 2*half_rowsize_dof - dof + j];
       }
       break;
     case QMG_CSHIFT_FROM_YP1:
@@ -102,13 +102,13 @@ template<typename T> void cshift_from_even(T* lhs, T* rhs, qmg_shift_dir cdir, i
       // Loop over all but periodic y-row.
       for (int i = half_rowsize_dof; i < half_size_dof; i++)
       {
-        lhs[half_rowsize_dof + i] = rhs[- half_rowsize_dof + i];
+        lhs[half_size_dof + i] = rhs[- half_rowsize_dof + i];
       }
 
       // Loop over periodic y row. Becomes MPI.
       for (int i = 0; i < half_rowsize_dof; i++)
       {
-        lhs[half_rowsize_dof + i] = rhs[half_size_dof - half_rowsize_dof + i];
+        lhs[half_size_dof + i] = rhs[half_size_dof - half_rowsize_dof + i];
       }
       break; 
     case QMG_CSHIFT_FROM_XP2:
@@ -125,18 +125,20 @@ template<typename T> void cshift_from_even(T* lhs, T* rhs, qmg_shift_dir cdir, i
 }
 
 // cshift function from odd.
-template<typename T> void cshift_from_odd(T* lhs, T* rhs, qmg_shift_dir cdir, int dof_per_site, Lattice2D* lat)
+template<typename T> void cshift_from_odd(T* lhs, T* rhs, qmg_cshift_dir cdir, int dof_per_site, Lattice2D* lat)
 {
+  int dof = dof_per_site;
+
   int half_size = lat->get_volume()/2;
-  int half_size_dof = half_size*dof;
+  int half_size_dof = half_size*dof_per_site;
 
   int half_rowsize = lat->get_dim_mu(0)/2;
-  int half_rowsize_dof = half_rowsize*dof; 
+  int half_rowsize_dof = half_rowsize*dof_per_site; 
   switch (cdir)
   {
     case QMG_CSHIFT_FROM_0:
       // I mean, this is silly.
-      copy(lhs+half_size, rhs+half_size, half_size);
+      copy_vector(lhs+half_size, rhs+half_size, half_size);
       break;
     case QMG_CSHIFT_FROM_XP1:
       // Loop over double rows in y.
@@ -214,7 +216,7 @@ template<typename T> void cshift_from_odd(T* lhs, T* rhs, qmg_shift_dir cdir, in
 }
 
 // Generic cshift function.
-template<typename T> void cshift(T* lhs, T* rhs, qmg_shift_dir cdir, qmg_eo eo, int dof_per_site, Lattice2D* lat)
+template<typename T> void cshift(T* lhs, T* rhs, qmg_cshift_dir cdir, qmg_eo eo, int dof_per_site, Lattice2D* lat)
 {
   if (eo & QMG_EO_FROM_EVEN)
   {
