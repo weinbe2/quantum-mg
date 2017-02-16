@@ -110,7 +110,7 @@ public:
   // Switch from an (x,y,nc,nc,mu) coordinate to an even-odd partitioned index
   inline int gauge_coord_to_index(int x, int y, int c1, int c2, int mu)
   {
-    return mu*size_gauge + cm_coord_to_index(x,y,c1,c2);
+    return mu*size_cm + cm_coord_to_index(x,y,c1,c2);
   }
   
   inline int gauge_coord_to_index(int* coord, int c1, int c2, int mu)
@@ -121,7 +121,7 @@ public:
   // Switch from an (x,y,nc,nc,\pm mu) coordinate to an even-odd partition index.
   inline int hopping_coord_to_index(int x, int y, int c1, int c2, int mu)
   {
-    return mu*size_gauge + cm_coord_to_index(x,y,c1,c2);
+    return mu*size_cm + cm_coord_to_index(x,y,c1,c2);
   }
   
   inline int hopping_coord_to_index(int* coord, int c1, int c2, int mu)
@@ -132,7 +132,7 @@ public:
   // Switch from an (x,y,nc,nc,munu) coordinate to an even-odd partition index.
   inline int corner_coord_to_index(int x, int y, int c1, int c2, int munu)
   {
-    return munu*size_gauge + cm_coord_to_index(x,y,c1,c2);
+    return munu*size_cm + cm_coord_to_index(x,y,c1,c2);
   }
   
   inline int corner_coord_to_index(int* coord, int c1, int c2, int munu)
@@ -196,8 +196,8 @@ public:
   // Switch from a gauge index to an x,y,c1,c2,mu coordinate.
   inline void gauge_index_to_coord(int i, int &x, int& y, int& c1, int& c2, int& mu)
   {
-    mu = i / size_gauge; 
-    cm_index_to_coord(i - mu*size_gauge, x, y, c1, c2);
+    mu = i / size_cm; 
+    cm_index_to_coord(i - mu*size_cm, x, y, c1, c2);
   }
   
   inline void gauge_index_to_coord(int i, int* coord, int& c1, int& c2, int& mu)
@@ -208,8 +208,8 @@ public:
   // Switch from a hopping index to an x,y,c1,c2,mu coordinate.
   inline void hopping_index_to_coord(int i, int &x, int& y, int& c1, int& c2, int& mu)
   {
-    mu = i / size_gauge;
-    cm_index_to_coord(i - mu*size_gauge, x, y, c1, c2);
+    mu = i / size_cm;
+    cm_index_to_coord(i - mu*size_cm, x, y, c1, c2);
   }
   
   inline void hopping_index_to_coord(int i, int* coord, int& c1, int& c2, int& mu)
@@ -220,8 +220,8 @@ public:
   // Switch from a corner index to an x,y,c1,c2,munu coordinate.
   inline void corner_index_to_coord(int i, int &x, int& y, int& c1, int& c2, int& munu)
   {
-    munu = i / size_gauge;
-    cm_index_to_coord(i - munu*size_gauge, x, y, c1, c2);
+    munu = i / size_cm;
+    cm_index_to_coord(i - munu*size_cm, x, y, c1, c2);
   }
   
   inline void corner_index_to_coord(int i, int* coord, int& c1, int& c2, int& munu)
@@ -299,6 +299,11 @@ public:
   inline int get_nc()
   {
     return nc;
+  }
+
+  inline int get_nc_nc()
+  {
+    return nc*nc;
   }
   
   inline int get_volume()

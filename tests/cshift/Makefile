@@ -12,7 +12,7 @@ C_EXAMPLES_OBJ = cshift_2d_test.o
 
 CCX = g++
 #CXXFLAGS =   -std=c99 -g -O2  
-CXXFLAGS = -O2 -Wall -std=c++11 -I../../ -I../../../quantum-linalg/
+CXXFLAGS = -O2 -g -Wall -std=c++11 -I../../ -I../../../quantum-linalg/
 
 
 #  = -DHAVE_CONFIG_H -I   -g -O2  -MT
