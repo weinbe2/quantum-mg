@@ -9,6 +9,7 @@
 #include "../lattice/lattice.h"
 #include "blas/generic_vector.h"
 #include "blas/generic_local_matrix.h"
+#include "blas/generic_matrix.h"
 #include "../cshift/cshift_2d.h"
 
 // Indexing offset of, for ex, XP1, is
@@ -30,7 +31,7 @@ enum stencil_dir_index
   QMG_DIR_INDEX_XM1YP1 = 1,
   QMG_DIR_INDEX_XM1YM1 = 2,
   QMG_DIR_INDEX_XP1YM1 = 3,
-}
+};
 
 // Enum for pieces of stencil that may exist. 
 enum stencil_pieces
@@ -42,11 +43,11 @@ enum stencil_pieces
   QMG_PIECE_CLOVER_HOPPING = 3,
   QMG_PIECE_TWOLINK_CORNER = 12,
   QMG_PIECE_ALL = 15,
-}
+};
 
 struct Stencil2D
 {
-private:
+protected:
   // Get rid of copy, assignment operator.
   Stencil2D(Stencil2D const &);
   Stencil2D& operator=(Stencil2D const &);
@@ -87,7 +88,7 @@ public:
   complex<double> dof_shift;
     
   // Base constructor
-  Stencil2D(Lattice2D* in_lat, int pieces, complex<double> in_shift = 0.0, complex<double> in_eo_shift = 0.0, complex<double> in_dof_shift)
+  Stencil2D(Lattice2D* in_lat, int pieces, complex<double> in_shift = 0.0, complex<double> in_eo_shift = 0.0, complex<double> in_dof_shift = 0.0)
     : lat(in_lat), shift(in_shift), eo_shift(in_eo_shift), dof_shift(in_dof_shift)
   {
     generated = false;
@@ -134,7 +135,7 @@ public:
     
   }
   
-  ~stencil_2d()
+  ~Stencil2D()
   {
     if (clover != 0) { deallocate_vector(&clover); }
     if (hopping != 0) { deallocate_vector(&hopping); }
@@ -152,10 +153,10 @@ public:
   // Clear out stencils!
   void clear_stencils()
   {
-    if (clover != 0) { zero<double>(clover, lat->get_size_cm()); }
-    if (hopping != 0) { zero<double>(hopping, lat->get_size_hopping()); }
-    if (twolink != 0) { zero<double>(twolink, lat->get_size_hopping()); }
-    if (corner != 0) { zero<double>(corner, lat->get_size_corner()); }
+    if (clover != 0) { zero_vector(clover, lat->get_size_cm()); }
+    if (hopping != 0) { zero_vector(hopping, lat->get_size_hopping()); }
+    if (twolink != 0) { zero_vector(twolink, lat->get_size_hopping()); }
+    if (corner != 0) { zero_vector(corner, lat->get_size_corner()); }
     
     generated = false; 
   }
@@ -221,7 +222,6 @@ public:
     int i,j;
     int index; 
     const int nc = lat->get_nc();
-    const int lattice_size = lat->get_lattice_size();
       
     if (shift != 0.0)
     {
@@ -405,137 +405,150 @@ public:
         cout << "\n";
       }
     }
+  }
       
-    // Need functions to apply M_{clover}, M_{eo}, M_{oe}, M_{twolink}, M_{corner}, M_{shift}
-    //   and, of course, all. 
+  // Need functions to apply M_{clover}, M_{eo}, M_{oe}, M_{twolink}, M_{corner}, M_{shift}
+  //   and, of course, all. 
 
-    void apply_M_clover(complex<double>* lhs, complex<double>* rhs)
+  void apply_M_clover(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (clover == 0)
+      return;
+
+    const int nc = lat->get_nc();
+    const int vol = lat->get_size_cm();
+
+    cMATxpy(clover, rhs, lhs, vol, nc, nc);
+  }
+
+  // Apply the eo part of the stencil.
+  void apply_M_eo(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (hopping == 0)
     {
-      if (clover == 0)
-        return;
-
-      const int nc = lat->get_nc();
-      const int vol = lat->get_volume();
-
-      cMATxpY(clover, lhs, rhs, vol, nc, nc);
+      cout << "[QMG-WARNING]: Attempt to call 'apply_M_eo' without hopping term.\n";
+      return;
     }
 
-    // Apply the eo part of the stencil.
-    void apply_M_eo(complex<double>* lhs, complex<double>* rhs)
+    const int nc = lat->get_nc();
+    const int half_vol = lat->get_volume()/2;
+
+    // + xhat
+    cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_XP1, QMG_EO_FROM_ODD, nc, lat);
+    cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+
+    // + yhat
+    cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_ODD, nc, lat);
+    cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+
+    // - xhat
+    cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_ODD, nc, lat);
+    cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+
+    // - yhat
+    cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_ODD, nc, lat);
+    cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+  }
+  
+  // Apply the oe part of the stencil.
+  void apply_M_oe(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (hopping == 0)
     {
-      if (hopping == 0)
-        return;
-
-      const int nc = lat->get_nc();
-      const int half_vol = lat->get_volume()/2;
-
-      // + xhat
-      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_XP1, QMG_EO_FROM_ODD, nc, lat);
-      cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
-
-      // + yhat
-      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_YP1, QMG_EO_FROM_ODD, nc, lat);
-      cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
-
-      // - xhat
-      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_XM1, QMG_EO_FROM_ODD, nc, lat);
-      cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
-
-      // - yhat
-      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_YM1, QMG_EO_FROM_ODD, nc, lat);
-      cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+      cout << "[QMG-WARNING]: Attempt to call 'apply_M_oe' without hopping term.\n";
+      return;
     }
+
+    const int nc = lat->get_nc();
+    const int half_vol = lat->get_volume()/2;
+    const int half_cv = lat->get_size_cv()/2;
+    const int half_cm = lat->get_size_cm()/2;
+
+    // + xhat
+    cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_XP1, QMG_EO_FROM_EVEN, nc, lat);
+    cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
+
+    // + yhat
+    cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_EVEN, nc, lat);
+    cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
+
+    // - xhat
+    cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_EVEN, nc, lat);
+    cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
+
+    // - yhat
+    cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_EVEN, nc, lat);
+    cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
+  }
+  
+  // void apply_M_twolink(complex<double>* lhs, complex<double>* rhs);
+  // void apply_M_corner(complex<double>* lhs, complex<double>* rhs);
+  
+  // Apply the shifts (think a mass term, maybe with signs a la \gamma_5 D)
+  void apply_M_shift(complex<double>* lhs, complex<double>* rhs)
+  {
+    // Get size of a LatticeColorVector
+    int cv = lat->get_size_cv();
+
+    // Apply shift and eo_shift to even sites.
+    caxpy(shift+eo_shift, rhs, lhs, cv/2);
+
+    // Apply shift and eo_shift to odd sites.
+    caxpy(shift-eo_shift, rhs+cv/2, lhs+cv/2, cv/2);
+
+    // There's no good way to do the dof shift with the current mem layout...
+    if (dof_shift != 0.0 && lat->get_nc() % 2 == 0) // is dof_shift valid?
+    {
+      int nc = lat->get_nc();
+      for (int c = 0; c < nc/2; c++)
+      {
+        // Shift top half of degrees of freedom by shift_dof.
+        caxpy_stride(dof_shift, rhs, lhs, lat->get_size_cv(), c, nc);
+
+        // Shift bottom half of degrees of freedom by -shift_dof.
+        caxpy_stride(-dof_shift, rhs, lhs, lat->get_size_cv(), c+nc/2, nc);
+      }
+    }
+  }
+
+  void apply_M(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (clover != 0)
+    {
+      apply_M_clover(lhs, rhs);
+    }
+
+    if (hopping != 0)
+    {
+      apply_M_eo(lhs, rhs);
+      apply_M_oe(lhs, rhs);
+    }
+
+    if (twolink != 0)
+    {
+      cout << "[QMG-WARNING]: two link stencil not yet supported.\n";
+    }
+
+    if (corner != 0)
+    {
+      cout << "[QMG-WARNING]: corner stencil not yet supported.\n";
+    }
+
+    apply_M_shift(lhs, rhs);
+  }
     
-    // Apply the oe part of the stencil.
-    void apply_M_oe(complex<double>* lhs, complex<double>* rhs)
-    {
-      if (hopping = 0)
-        return;
-
-      const int nc = lat->get_nc();
-      const int half_vol = lat->get_volume()/2;
-      const int half_cv = lat->get_size_cv()/2;
-      const int half_cm = lat->get_size_cm()/2;
-
-      // + xhat
-      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_XP1, QMG_EO_FROM_EVEN, nc, lat);
-      cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs, half_vol, nc, nc);
-
-      // + yhat
-      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_YP1, QMG_EO_FROM_EVEN, nc, lat);
-      cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs, half_vol, nc, nc);
-
-      // - xhat
-      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_XM1, QMG_EO_FROM_EVEN, nc, lat);
-      cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs, half_vol, nc, nc);
-
-      // - yhat
-      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_YM1, QMG_EO_FROM_EVEN, nc, lat);
-      cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs, half_vol, nc, nc);
-    }
-    
-    // void apply_M_twolink(complex<double>* lhs, complex<double>* rhs);
-    // void apply_M_corner(complex<double>* lhs, complex<double>* rhs);
-    
-    // Apply the shifts (think a mass term, maybe with signs a la \gamma_5 D)
-    void apply_M_shift(complex<double>* lhs, complex<double>* rhs)
-    {
-      // Get size of a LatticeColorVector
-      int cv = lat->get_size_cv();
-
-      // Apply shift and eo_shift to even sites.
-      caxpy(shift+shift_eo, rhs, lhs, cv/2);
-
-      // Apply shift and eo_shift to odd sites.
-      caxpy(shift-shift_eo, rhs+cv/2, lhs+cv/2, cv/2);
-
-      // There's no good way to do the dof shift with the current mem layout...
-      if (shift_dof != 0.0 && lat->get_nc() % 2 == 0) // is shift_dof valid?
-      {
-        int nc = lat->get_nc();
-        for (int c = 0; c < nc/2; c++)
-        {
-          // Shift top half of degrees of freedom by shift_dof.
-          caxpy_stride(shift_dof, rhs, lhs, lat->get_size_cv(), c, nc);
-
-          // Shift bottom half of degrees of freedom by -shift_dof.
-          caxpy_stride(-shift_dof, rhs, lhs, lat->get_size_cv(), c+nc/2, nc);
-        }
-      }
-    }
-
-    void apply_M(complex<double>* lhs, complex<double>* rhs)
-    {
-      if (clover != 0)
-      {
-        apply_M_clover(lhs, rhs);
-      }
-
-      if (hopping != 0)
-      {
-        apply_M_eo(lhs, rhs);
-        apply_M_oe(lhs, rhs);
-      }
-
-      if (twolink != 0)
-      {
-        cout << "[QMG-WARNING]: two link stencil not yet supported.\n";
-      }
-
-      if (corner != 0)
-      {
-        cout << "[QMG-WARNING]: corner stencil not yet supported.\n";
-      }
-
-      apply_M_shift(lhs, rhs);
-    }
-      
-    // Need functions to build dagger of a stencil from another stencil,
-    //   and build a normal stencil from two one-link stencils.
-    // void build_M_dagger_stencil(Stencil2D* orig_stenc); 
-    // void build_M_dagger_M_stencil(Stencil2D* orig_stenc);
-    }
+  // Need functions to build dagger of a stencil from another stencil,
+  //   and build a normal stencil from two one-link stencils.
+  // void build_M_dagger_stencil(Stencil2D* orig_stenc); 
+  // void build_M_dagger_M_stencil(Stencil2D* orig_stenc);
 };
 
+// Special C function wrappers for stencil applications.
+void apply_stencil_2D_M(complex<double>* lhs, complex<double>* rhs, void* extra_data)
+{
+  Stencil2D* stenc = (Stencil2D*)extra_data;
+  zero_vector(lhs, stenc->lat->get_size_cv());
+  stenc->apply_M(lhs, rhs); // lhs = M rhs
+}
 
 #endif // QMG_STENCIL_2D

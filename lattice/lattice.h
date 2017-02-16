@@ -149,7 +149,7 @@ public:
   {
     int parity = (i / (volume/2)); // 0 if even, 1 if odd.
     y = i/(dims[0]/2) - parity*dims[1];
-    x = 2*(i % dims[0]/2) + (y%2 + parity)%2;
+    x = 2*(i % (dims[0]/2)) + (y%2 + parity)%2;
   }
   
   inline void index_to_coord(int i, int* coord)
