@@ -35,6 +35,12 @@ enum qmg_eo
   QMG_EO_FROM_EVENODD = 3,
 };
 
+
+// cshift functions need to be overhauled for MPI.
+// Need halo regions.
+// Probably should have thought through writing this correctly
+// in the first place. 
+
 // cshift function from even.
 template<typename T> void cshift_from_even(T* lhs, T* rhs, qmg_cshift_dir cdir, int dof_per_site, Lattice2D* lat)
 {

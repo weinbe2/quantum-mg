@@ -51,6 +51,10 @@ private:
   Stencil2D(Stencil2D const &);
   Stencil2D& operator=(Stencil2D const &);
 
+  // Internal memory for cshifts.
+  complex<double>* priv_cmatrix;
+  complex<double>* priv_cvector;
+
 public:
   // Associated lattice!
   Lattice2D* lat; 
@@ -123,6 +127,10 @@ public:
     {
       corner = 0;
     }
+
+    // Allocate private memory.
+    priv_cmatrix = allocate_vector<complex<double>>(lat->get_size_cm());
+    priv_cvector = allocate_vector<complex<double>>(lat->get_size_cv());
     
   }
   
@@ -132,6 +140,10 @@ public:
     if (hopping != 0) { deallocate_vector(&hopping); }
     if (twolink != 0) { deallocate_vector(&twolink); }
     if (corner != 0) { deallocate_vector(&corner); }
+
+    // Deallocate private memory.
+    deallocate_vector(&priv_cmatrix);
+    deallocate_vector(&priv_cvector);
     
     generated = false; 
 
@@ -396,12 +408,72 @@ public:
       
     // Need functions to apply M_{clover}, M_{eo}, M_{oe}, M_{twolink}, M_{corner}, M_{shift}
     //   and, of course, all. 
-    // void apply_M_clover(complex<double>* lhs, complex<double>* rhs);
+
+    void apply_M_clover(complex<double>* lhs, complex<double>* rhs)
+    {
+      if (clover == 0)
+        return;
+
+      const int nc = lat->get_nc();
+      const int vol = lat->get_volume();
+
+      cMATxpY(clover, lhs, rhs, vol, nc, nc);
+    }
 
     // Apply the eo part of the stencil.
-    //void apply_M_eo(complex<double>* lhs, complex<double>* rhs)
+    void apply_M_eo(complex<double>* lhs, complex<double>* rhs)
+    {
+      if (hopping == 0)
+        return;
+
+      const int nc = lat->get_nc();
+      const int half_vol = lat->get_volume()/2;
+
+      // + xhat
+      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_XP1, QMG_EO_FROM_ODD, nc, lat);
+      cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+
+      // + yhat
+      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_YP1, QMG_EO_FROM_ODD, nc, lat);
+      cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+
+      // - xhat
+      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_XM1, QMG_EO_FROM_ODD, nc, lat);
+      cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+
+      // - yhat
+      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_YM1, QMG_EO_FROM_ODD, nc, lat);
+      cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+    }
     
-    // void apply_M_oe(complex<double>* lhs, complex<double>* rhs);
+    // Apply the oe part of the stencil.
+    void apply_M_oe(complex<double>* lhs, complex<double>* rhs)
+    {
+      if (hopping = 0)
+        return;
+
+      const int nc = lat->get_nc();
+      const int half_vol = lat->get_volume()/2;
+      const int half_cv = lat->get_size_cv()/2;
+      const int half_cm = lat->get_size_cm()/2;
+
+      // + xhat
+      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_XP1, QMG_EO_FROM_EVEN, nc, lat);
+      cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs, half_vol, nc, nc);
+
+      // + yhat
+      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_YP1, QMG_EO_FROM_EVEN, nc, lat);
+      cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs, half_vol, nc, nc);
+
+      // - xhat
+      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_XM1, QMG_EO_FROM_EVEN, nc, lat);
+      cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs, half_vol, nc, nc);
+
+      // - yhat
+      cshift(priv_cvector, rhs, QMG_SHIFT_FROM_YM1, QMG_EO_FROM_EVEN, nc, lat);
+      cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs, half_vol, nc, nc);
+    }
+    
     // void apply_M_twolink(complex<double>* lhs, complex<double>* rhs);
     // void apply_M_corner(complex<double>* lhs, complex<double>* rhs);
     
@@ -431,12 +503,38 @@ public:
         }
       }
     }
-    // void apply_M(complex<double>* lhs, complex<double>* rhs); 
+
+    void apply_M(complex<double>* lhs, complex<double>* rhs)
+    {
+      if (clover != 0)
+      {
+        apply_M_clover(lhs, rhs);
+      }
+
+      if (hopping != 0)
+      {
+        apply_M_eo(lhs, rhs);
+        apply_M_oe(lhs, rhs);
+      }
+
+      if (twolink != 0)
+      {
+        cout << "[QMG-WARNING]: two link stencil not yet supported.\n";
+      }
+
+      if (corner != 0)
+      {
+        cout << "[QMG-WARNING]: corner stencil not yet supported.\n";
+      }
+
+      apply_M_shift(lhs, rhs);
+    }
       
     // Need functions to build dagger of a stencil from another stencil,
     //   and build a normal stencil from two one-link stencils.
     // void build_M_dagger_stencil(Stencil2D* orig_stenc); 
     // void build_M_dagger_M_stencil(Stencil2D* orig_stenc);
+    }
 };
 
 
