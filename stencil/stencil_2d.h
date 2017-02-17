@@ -432,6 +432,7 @@ public:
 
     const int nc = lat->get_nc();
     const int half_vol = lat->get_volume()/2;
+    const int size_cm = lat->get_size_cm();
 
     // + xhat
     cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_XP1, QMG_EO_FROM_ODD, nc, lat);
@@ -439,15 +440,15 @@ public:
 
     // + yhat
     cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_ODD, nc, lat);
-    cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+    cMATxpy(hopping + size_cm, priv_cvector, lhs, half_vol, nc, nc);
 
     // - xhat
     cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_ODD, nc, lat);
-    cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+    cMATxpy(hopping + 2*size_cm, priv_cvector, lhs, half_vol, nc, nc);
 
     // - yhat
     cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_ODD, nc, lat);
-    cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+    cMATxpy(hopping + 3*size_cm, priv_cvector, lhs, half_vol, nc, nc);
   }
   
   // Apply the oe part of the stencil.
@@ -462,6 +463,7 @@ public:
     const int nc = lat->get_nc();
     const int half_vol = lat->get_volume()/2;
     const int half_cv = lat->get_size_cv()/2;
+    const int size_cm = lat->get_size_cm();
     const int half_cm = lat->get_size_cm()/2;
 
     // + xhat
@@ -470,15 +472,15 @@ public:
 
     // + yhat
     cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_EVEN, nc, lat);
-    cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
+    cMATxpy(hopping + size_cm + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
 
     // - xhat
     cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_EVEN, nc, lat);
-    cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
+    cMATxpy(hopping + 2*size_cm + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
 
     // - yhat
     cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_EVEN, nc, lat);
-    cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
+    cMATxpy(hopping + 3*size_cm + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
   }
   
   // void apply_M_twolink(complex<double>* lhs, complex<double>* rhs);
