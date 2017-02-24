@@ -80,7 +80,7 @@ int main(int argc, char** argv)
   // Reset double output format.
   cout << setiosflags(ios::scientific) << setprecision(6);
 
-  // Perform a BiCGstab-L inversion.
+  // Perform a GCR inversion.
   inversion_info invif = minv_vector_gcr(lhs, rhs, cv_size, max_iter, tol, apply_stencil_2D_M, (void*)stag_stencil, verb);
 
   // Check results.
