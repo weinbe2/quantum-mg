@@ -139,6 +139,16 @@ public:
   {
     return corner_coord_to_index(coord[0], coord[1], c1, c2, munu);
   }
+
+  ///////////////////////////////////////////////////////////////
+  // FUNCTIONS TO GO FROM ONE INDEX TO ANOTHER WITH EXTRA INFO //
+  ///////////////////////////////////////////////////////////////
+
+  // Switch from a volume index + dof coordinate to cv index
+  inline int vol_index_dof_to_cv_index(int vol_index, int c)
+  {
+    return nc*vol_index + c; 
+  }
   
   /////////////////////////////////////////////////
   // FUNCTIONS TO GO FROM INDICES TO COORDINATES //
