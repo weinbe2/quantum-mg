@@ -14,11 +14,6 @@ using namespace std;
 
 // QMG
 #include "lattice/lattice.h"
-#include "cshift/cshift_2d.h"
-#include "u1/u1_utils.h"
-#include "stencil/stencil_2d.h"
-
-#include "operators/gaugedlaplace.h"
 
 // Merge sort wooo, smallest element first.
 void merge_sort(int* sort_me, int* temp, int size)
@@ -84,6 +79,8 @@ void coarse_to_fine_cv(complex<double>* coarse_cv, complex<double>* fine_cv, com
 // Arg 6: fine lattice object.
 // Arg 7: coarse lattice object.
 void fine_to_coarse_cv(complex<double>* fine_cv, complex<double>* coarse_cv, complex<double>** null_vectors, int nvec, int** coarse_map, Lattice2D* fine_lat, Lattice2D* coarse_lat);
+
+
 
 // Special C function to take the inverse
 // square root of the real part of a site. 
