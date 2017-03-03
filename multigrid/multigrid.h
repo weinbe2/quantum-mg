@@ -17,12 +17,15 @@
 // ** This allows the user to start storing levels in the MG object when
 //     recursively generating coarser levels.
 // * A private function to (optionaly) explicitly build the coarse stencil.
+//     NOT YET IMPLEMENTED YET.
 // ** Implemented as a flag on pushing a new level.
 // ** Should have a flag to specify if it should be built from the
 //     original operator or right block Jacobi operator.
+//     NOT YET MEANINGFULLY IMPLEMENTED YET.
 // * A function to apply the stencil at a specified level.
 // * A function to prepare, solve, reconstruct right block Jacobi and, where
 //    possible, Schur preconditioned systems. 
+//    NOT YET IMPLEMENTED YET.
 // * Optional, but for convenience, two pre-allocated temporary vectors
 //    at each level.
 // ** This avoids allocating and deallocating temporary vectors, such as for
@@ -53,8 +56,8 @@ class MultigridMG
 {
 private:
   // Get rid of copy, assignment operator.
-  MultigridMG(TransferMG const &);
-  MultigridMG& operator=(TransferMG const &);
+  MultigridMG(MultigridMG const &);
+  MultigridMG& operator=(MultigridMG const &);
 
   // Current number of levels. Gets updated when user
   // adds another layer. There's a public function that
@@ -72,6 +75,11 @@ private:
   // set as a zero pointer). Should have length = num_levels.
   vector<Stencil2D*> stencil_list;
 
+  // Knowledge of if the MG class has created the stencil itself
+  // or not. This informs what needs to be deleted in the destructor.
+  // Should have length = num_levels, and is_stencil_managed[0] = false always.
+  vector<bool> is_stencil_managed; 
+
   // Optional, but for convenience, two pre-allocated temporary vectors
   // at each level. Should have length = num_levels.
   vector<complex<double>*> temp_vec_1;
@@ -81,377 +89,263 @@ private:
   // orthogonalized null vectors. Should have length = num_levels - 1.
   vector<complex<double>**> global_null_vectors; 
 
+public:
+
+  // Enum for the stencil preconditioned application type.
+  enum QMGMultigridPrecondStencil
+  {
+    QMG_MULTIGRID_PRECOND_ORIGINAL = 0, // Original stencil
+    QMG_MULTIGRID_PRECOND_RIGHT_BLOCK_JACOBI = 1, // Right block jacobi stencil.
+    QMG_MULTIGRID_PRECOND_SCHUR = 2, // Schur decomposed right block jacobi stencil.
+  };
   
 public:
   
-  // Constructor. Takes in fine and coarse lattice, input null vectors, and
-  // a flag about performing block orthonormalization (default true).
-  // If the null vectors are pre-block orthonormalized, it might make sense
-  // to not waste time re-orthonormalizing them. 
-  TransferMG(Lattice2D* in_fine_lat, Lattice2D* in_coarse_lat, complex<double>** in_null_vectors, bool do_block_ortho = true)
-    : fine_lat(in_fine_lat), coarse_lat(in_coarse_lat), const_num_null_vec(coarse_lat->get_nc()),
-      const_coarse_volume(coarse_lat->get_volume()), blocksizes(0), coarse_map(0), null_vectors(0)
+  // Constructor. Takes in fine lattice and stencil.
+  // At some point, I should add a constructor which can take multiple levels
+  // at once. 
+  MultigridMG(Lattice2D* in_lat, Stencil2D* in_stencil)
   {
-    // Assume the vector construction failed until we know it hasn't.
-    is_init = false;
+    // Initialize number of levels to 1.
+    num_levels = 1;
 
-    // Learn the blocksizes. 
-    blocksizes = new int[fine_lat->get_nd()];
-    fine_sites_per_coarse = fine_lat->get_nc();
-    for (int i = 0; i < fine_lat->get_nd(); i++)
-    {
-      if (fine_lat->get_dim_mu(i) % coarse_lat->get_dim_mu(i) != 0)
-      {
-        std::cout << "[QMG-ERROR]: Fine lattice dimension " << i << "isn't divided evenly by coarse dimension.\n";
-        return;
-      }
-      blocksizes[i] = fine_lat->get_dim_mu(i)/coarse_lat->get_dim_mu(i);
-      fine_sites_per_coarse *= blocksizes[i];
-    }
+    // Push the fine lattice onto lattice_list.
+    lattice_list.push_back(in_lat);
 
-    // Prepare the one-to-many mapping between coarse sites and fine sites+dof.
-    coarse_map = allocate_vector<int*>(coarse_lat->get_volume());
-    build_mapping();
+    // Prepare the first two temporary vectors. 
+    temp_vec_1.push_back(allocate_vector<complex<double>>(lattice_list[0]->get_size_cv()));
+    temp_vec_2.push_back(allocate_vector<complex<double>>(lattice_list[0]->get_size_cv()));
 
-    // Allocate null vectors, copy them in.
-    null_vectors = new complex<double>*[coarse_lat->get_nc()];
-    for (int i = 0; i < coarse_lat->get_nc(); i++)
-    {
-      null_vectors[i] = allocate_vector<complex<double>>(fine_lat->get_size_cv());
-      copy_vector(null_vectors[i], in_null_vectors[i], fine_lat->get_size_cv());
-    }
+    // Push the fine stencil.
+    stencil_list.push_back(in_stencil);
 
-    // Block orthonormalize, if requested.
-    if (do_block_ortho)
-      block_orthonormalize();
-
-    // We're good!
-    is_init = true;
-
+    // Push that we are NOT responsible for the first stencil.
+    is_stencil_managed.push_back(false);
   }
 
   // Destructor. Clean up!
-  ~TransferMG()
+  ~MultigridMG()
   {
-    if (blocksizes != 0) { delete[] blocksizes; }
-    if (null_vectors != 0)
+    int i;
+    
+    // Clean up temporary vectors.
+    for (i = 0; i < num_levels; i++)
     {
-      for (int i = 0; i < const_num_null_vec; i++)
+      // Deallocate temporary vectors.
+      if (temp_vec_1[i] != 0) { deallocate_vector(&temp_vec_1[i]); }
+      if (temp_vec_2[i] != 0) { deallocate_vector(&temp_vec_2[i]); }
+      
+      // Clean up stencils that this class created.
+      if (is_stencil_managed[i] && stencil_list[i] != 0)
       {
-        if (null_vectors[i] != 0) { deallocate_vector(&null_vectors[i]); }
+        delete stencil_list[i];
+        stencil_list[i] = 0;
       }
-      delete[] null_vectors;
     }
-    if (coarse_map != 0)
+
+    // Safely clean up null vectors.
+    for (i = 0; i < num_levels+1; i++)
     {
-      for (int i = 0; i < const_coarse_volume; i++)
+      int num_null = lattice_list[i+1]->get_nc();
+      if (global_null_vectors[i] != 0)
       {
-        if (coarse_map[i] != 0) { delete[] coarse_map[i]; }
+        for (int j = 0; j < num_null; j++)
+        {
+          if (global_null_vectors[i][j] != 0)
+          {
+            deallocate_vector(&global_null_vectors[i][j]);
+            global_null_vectors[i][j] = 0;
+          }
+        }
+        delete[] global_null_vectors[i];
+        global_null_vectors[i] = 0;
       }
-      deallocate_vector(&coarse_map);
     }
   }
 
   // Public function exposing number of levels.
-  int get_num_levels()
+  inline int get_num_levels()
   {
     return num_levels;
   }
 
-  // Query if the transfer object is properly initialized.
-  bool is_initialized()
+  // Public function exposing a given lattice.
+  inline Lattice2D* get_lattice(int i)
   {
-    return is_init;
-  }
-
-  // The public 'prolong' operator (coarse_to_fine)
-  // Arg 1: coarse vector.
-  // Arg 2: fine vector.
-  void prolong_c2f(complex<double>* coarse_cv, complex<double>* fine_cv)
-  {
-    prolong_c2f(coarse_cv, fine_cv, null_vectors, coarse_lat->get_nc());
-  }
-
-  // The public 'restrict' operator (fine to coarse)
-  // Arg 1: fine vector.
-  // Arg 2: coarse vector.
-  void restrict_f2c(complex<double>* fine_cv, complex<double>* coarse_cv)
-  {
-    restrict_f2c(fine_cv, coarse_cv, null_vectors, coarse_lat->get_nc());
-  }
-
-
-private:
-
-  // Declare merge sort for build_mapping. Smallest int first.
-  void merge_sort(int* sort_me, int* temp, int size);
-
-  // Recursive function to learn every fine site corresponding
-  // to a coarse site. Recursive b/c it's dimension-independent!
-  void recursive_site_build(int* list, int* coarse_coord, int* coords, int step, int& count);
-
-  // Special C function to take the inverse
-  // square root of the real part of a site. 
-  // Needed for block orthonormalize.
-  static inline void inv_real_sqrt(int i, complex<double>& elem, void* extra_data)
-  {
-    double tmp = 1.0/sqrt(real(elem));
-    elem = complex<double>(tmp, 0.0);
-  }
-  
-};
-
-// Recursive function to learn every fine site corresponding
-// to a coarse site. Recursive b/c it's dimension-independent!
-void TransferMG::recursive_site_build(int* list, int* coarse_coords, int* coords, int step, int& count)
-{
-  if (step < fine_lat->get_nd())
-  {
-    // Loop over every site in block in dimension step.
-    for (int i = coarse_coords[step]*blocksizes[step]; i < (coarse_coords[step]+1)*blocksizes[step]; i++)
+    if (i >= 0 && i < num_levels)
     {
-      coords[step] = i;
-      recursive_site_build(list, coarse_coords, coords, step+1, count);
+      return lattice_list[i];
     }
-  }
-  else // we're on the lowest level. coords is fully populated.
-  {
-    for (int i = 0; i < fine_lat->get_nc(); i++)
-    {
-      list[count++] = fine_lat->cv_coord_to_index(coords, i);
-    }
-  }
-}
-
-// Figure out the one-to-many mapping between coarse sites (volume)
-//         and fine sites (full color vector).
-//         There's no reason why this couldn't be many-to-many (for overlapping 
-//         domains, for ex).
-void TransferMG::build_mapping()
-{
-  // Get total number of coarse sites.
-  const int coarse_volume = coarse_lat->get_volume();
-
-  // Temporary memory used for merge sort.
-  int* tmp_mem = new int[fine_sites_per_coarse];
-
-  // Temporary memory for recursive fine site build.
-  int* coarse_coord = new int[coarse_lat->get_nd()];
-  int* fine_coords = new int[coarse_lat->get_nd()];
-
-  // Counter.
-  int count; 
-
-  // Loop over coarse sites.
-  // OPENMP/ACC WOULD GO HERE.
-  for (int i = 0; i < coarse_volume; i++)
-  {
-    // Initialize coarse map.
-    coarse_map[i] = new int[fine_sites_per_coarse];
-
-    // Get coarse coordinates.
-    coarse_lat->index_to_coord(i, coarse_coord);
-
-    // Recursively build fine site list.
-    count = 0;
-    recursive_site_build(coarse_map[i], coarse_coord, fine_coords, 0, count);
-
-    // Sort the fine indices.
-    merge_sort(coarse_map[i], tmp_mem, fine_sites_per_coarse);
-  }
-
-  // Clean up.
-  delete[] tmp_mem;
-  delete[] coarse_coord;
-  delete[] fine_coords; 
-
-}
-
-// More general 'prolong' operator (coarse_to_fine)
-// Arg 1: coarse vector.
-// Arg 2: fine vector.
-// Arg 3: null vector(s).
-// Arg 4: number of null vectors. (there are some cases we want to prolong w/ 1.)
-void TransferMG::prolong_c2f(complex<double>* coarse_cv, complex<double>* fine_cv, complex<double>** in_null_vectors, int nvec)
-{
-  int i,i_dof,j;
-  const int coarse_volume = coarse_lat->get_volume();
-
-  // Loop over every coarse site.
-  for (i = 0; i < coarse_volume; i++)
-  {
-    // Loop over each null vector (generically, coarse dof)
-    for (i_dof = 0; i_dof < nvec; i_dof++)
-    {
-      // Get the coarse color vector index.
-      int cv_index = coarse_lat->vol_index_dof_to_cv_index(i, i_dof);
-
-      // We saved each coarse site's corresponding fine degrees of freedom.
-      for (j = 0; j < fine_sites_per_coarse; j++)
-      {
-        // Do the prolong!
-        // Update the fine vector site with the i_dof's null vector site times
-        // the relevant coarse index. 
-        fine_cv[coarse_map[i][j]] += in_null_vectors[i_dof][coarse_map[i][j]]*coarse_cv[cv_index];
-      }
-
-    }
-  }
-}
-
-// Pre-declaring a 'restrict' operator (fine_to_coarse)
-// Arg 1: fine vector.
-// Arg 2: coarse vector.
-// Arg 3: null vector(s).
-// Arg 4: number of null vectors. (there are some cases we want to restrict w/ 1.)
-void TransferMG::restrict_f2c(complex<double>* fine_cv, complex<double>* coarse_cv, complex<double>** in_null_vectors, int nvec)
-{
-  int i,i_dof,j;
-  const int coarse_volume = coarse_lat->get_volume();
-
-  // Loop over every coarse site.
-  for (i = 0; i < coarse_volume; i++)
-  {
-    // Loop over each null vector (generically, coarse dof)
-    for (i_dof = 0; i_dof < nvec; i_dof++)
-    {
-      // Get the coarse color vector index.
-      int cv_index = coarse_lat->vol_index_dof_to_cv_index(i, i_dof);
-
-      // We saved each coarse site's corresponding fine degrees of freedom.
-      for (j = 0; j < fine_sites_per_coarse; j++)
-      {
-        // Do the restrict.
-        // Update the coarse vector site with the conjugate i_dof's null
-        // vector times the relevant fine index.
-        coarse_cv[cv_index] += conj(in_null_vectors[i_dof][coarse_map[i][j]])*fine_cv[coarse_map[i][j]];
-      }
-    }
-  }
-}
-
-// Perform the block orthonormalization.
-void TransferMG::block_orthonormalize()
-{
-  // James Osborn has a smart way of doing it---you can write block
-  // orthonormalization in terms of prolong-restrict operations. 
-  // Ref: https://github.com/usqcd-software/qopqdp/blob/master/lib/mg/mg_p.c
-  // Line 240, function QOPP(mgOrtho)(QDPN(ColorVector) *cv[], int nv, QOP_MgBlock *mgb)
-
-  // Iterators.
-  int i,j;
-
-  // Values.
-  const int fine_size_cv = fine_lat->get_size_cv();
-  const int coarse_size_cv = coarse_lat->get_size_cv();
-  const int coarse_dof = coarse_lat->get_nc();
-
-  // Temporary vectors. 
-
-  // Fine...
-  complex<double>* fine_cv_1 = allocate_vector<complex<double>>(fine_size_cv);
-  zero_vector(fine_cv_1, fine_size_cv);
-
-  // ...and coarse.
-  complex<double>* coarse_cv_2 = allocate_vector<complex<double>>(coarse_size_cv);
-  zero_vector(coarse_cv_2, coarse_size_cv);
-
-  // Loop over all null vectors.
-  for (i = 0; i < coarse_dof; i++)
-  {
-    // Block Orthogonalize null vector i against previous null vectors.
-    for (j = 0; j < i; j++)
-    {
-      // Zero out vectors.
-      zero_vector(fine_cv_1, fine_size_cv);
-      zero_vector(coarse_cv_2, coarse_size_cv);
-
-      // Restrict null vector i with (already ortho'd null vector) j.
-      // This is the <\vec{i},\vec{j}> dot product in Gram-Schmidt.
-      restrict_f2c(null_vectors[i], coarse_cv_2, &null_vectors[j], 1);
-
-      // Prolong again with null vector i.
-      // This forms <\vec{i},\vec{j}> \vec{j}.
-      prolong_c2f(coarse_cv_2, fine_cv_1, &null_vectors[j], 1);
-
-      // Subtract off.
-      // This forms \vec{i} -= <\vec{i},\vec{j}> \vec{j}.
-      caxpy(-1.0, fine_cv_1, null_vectors[i], fine_size_cv);
-    }
-
-    // Block normalize null vector i.
-    // zero out vectors again.
-    zero_vector(fine_cv_1, fine_size_cv);
-    zero_vector(coarse_cv_2, coarse_size_cv);
-
-    // Restrict null vector i with null vector i.
-    // This is a block <\vec{i}, \vec{i}>.
-    restrict_f2c(null_vectors[i], coarse_cv_2, &null_vectors[i], 1);
-
-    // Prepare to normalize. This requires taking the inverse sqrt of
-    // <\vec{i}, \vec{i}>. The '0' is because it doesn't need any info passed in.
-    arb_local_function_vector(coarse_cv_2, inv_real_sqrt, 0, coarse_size_cv);
-
-    // Prolong the inverse norm with null vector i. 
-    // This is block \vec{i}/sqrt(<\vec{i}, \vec{i}>).
-    prolong_c2f(coarse_cv_2, fine_cv_1, &null_vectors[i], 1);
-
-    // Set this back to null_vectors[i].
-    copy_vector(null_vectors[i], fine_cv_1, fine_size_cv);
-  }
-
-  // Clean up.
-  deallocate_vector(&coarse_cv_2);
-  deallocate_vector(&fine_cv_1);
-}
-
-////////////////////////
-// AUXILARY FUNCTIONS //
-////////////////////////
-
-// Declare merge sort for build_mapping. Smallest int first.
-void TransferMG::merge_sort(int* sort_me, int* temp, int size)
-{
-  if (size == 1) // trivial
-  {
-    return;
-  }
-  if (size == 2) // trivial
-  {
-    temp[0] = sort_me[0];
-    if (sort_me[1] < sort_me[0])
-    {
-      sort_me[0] = sort_me[1];
-      sort_me[1] = temp[0];
-    }
-    return;
-  }
-
-  // recurse.
-  merge_sort(sort_me, temp, size/2);
-  merge_sort(sort_me + size/2, temp + size/2, size - size/2);
-
-  // merge
-  int curr1 = 0;
-  int curr2 = size/2;
-  int currtmp = 0;
-
-  while (curr1 < size/2 && curr2 < size)
-  {
-    if (sort_me[curr1] < sort_me[curr2])
-      temp[currtmp++] = sort_me[curr1++];
     else
-      temp[currtmp++] = sort_me[curr2++];
+    {
+      cout << "[QMG-ERROR]: Out of range: Lattice level " << i << " does not exist in MultigridMG object.\n";
+      return 0;
+    }
   }
 
-  while (curr1 < size/2)
-    temp[currtmp++] = sort_me[curr1++];
+  // Public function exposing a transfer between level i and i+1.
+  inline TransferMG* get_transfer(int i)
+  {
+    if (i >= 0 && i < num_levels-1)
+    {
+      return transfer_list[i];
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Transfer object level " << i << " does not exist in MultigridMG object.\n";
+      return 0;
+    }
+  }
 
-  while (curr2 < size)
-    temp[currtmp++] = sort_me[curr2++];
+  // Public function exposing a stencil between level i and i+1.
+  inline Stencil2D* get_stencil(int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      return stencil_list[i];
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Stencil object level " << i << " does not exist in MultigridMG object.\n";
+      return 0;
+    }
+  }
 
-  for (int i = 0; i < size; i++)
-    sort_me[i] = temp[i];
-}
+  // Public function copying saved null vectors into a given array of vectors.
+  void get_global_null_vectors(int i, complex<double>** out_vectors)
+  {
+    if (i >= 0 && i < num_levels-1)
+    {
+      if (out_vectors != 0 && global_null_vectors[i] != 0)
+      {
+        for (int j = 0; j < lattice_list[i+1]->get_nc(); j++)
+        {
+          if (out_vectors[j] != 0 && global_null_vectors[i][j] != 0)
+          {
+            copy_vector(out_vectors[j], global_null_vectors[i][j], lattice_list[i]->get_size_cv());
+          }
+        }
+      }
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Null vectors level " << i << " does not exist in MultigridMG object.\n";
+      return 0;
+    }
+  }
+
+  // Public function to push a new level!
+  // Arg 1: New lattice object.
+  // Arg 2: New transfer object.
+  // Arg 3: (Not yet implemented) If we should explicitly build the new coarse stencil or not.
+  // Arg 4: (Not yet implemented) If we should build the new coarse stencil from a preconditioned
+  //          version of the stencil a level up.
+  // Arg 5: Copy in the global null vectors. These are null vectors
+  //          that are not yet block orthonormalized.
+  void push_level(Lattice2D* new_lat, TransferMG* new_transfer, bool build_stencil = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, complex<double>** nvecs = 0)
+  {
+    // Update number of levels.
+    num_levels++;
+
+    // Push new lattice.
+    lattice_list.push_back(new_lat);
+
+    // Push new transfer object.
+    transfer_list.push_back(new_transfer);
+
+    // Deal with stencil.
+    if (build_stencil)
+    {
+      cout << "[QMG-ERROR]: MultigridMG does not support building a stencil yet. Default to null.\n";
+      stencil_list.push_back(0);
+    }
+    else
+    {
+      stencil_list.push_back(0);
+    }
+
+    // What operator are we building the stencil from?
+    // At some point we'll at least support building it from
+    // the right block jacobi stencil...
+    if (build_stencil_from != QMG_MULTIGRID_PRECOND_ORIGINAL)
+    {
+      cout << "[QMG-ERROR]: MultigridMG does not support preconditioned stencils yet. Default to original stencil.\n";
+    }
+
+    // Copy global null vectors, if they're non-zero.
+    if (nvecs != 0)
+    {
+      global_null_vectors.push_back(new complex<double*>(new_lat->get_nc()));
+      for (int j = 0; j < new_lat->get_nc(); j++)
+      {
+        if (nvecs[j] != 0)
+        {
+          complex<double*> tmp = allocate_vector<complex<double>*>(lattice_list[num_levels-2]->get_size_cv());
+          copy_vector(tmp, nvecs[j], lattice_list[num_levels-2]->get_size_cv());
+          global_null_vectors[num_levels-2][j] = tmp;
+        }
+      }
+    }
+    else
+    {
+      global_null_vectors.push_back(0);
+    }
+  }
+
+  // A flavor of the function to push a new level
+  // that assumes we're not building the coarse stencil,
+  // but still wants to save global null vectors.
+  // Arg 1: New lattice object.
+  // Arg 2: New transfer object.
+  // Arg 3: Copy in the global null vectors. These are null vectors
+  //          that are not yet block orthonormalized.
+  void push_level(Lattice2D* new_lat, TransferMG* new_transfer,complex<double>** nvecs)
+  {
+    push_level(new_lat, new_transfer, false, QMG_MULTIGRID_PRECOND_ORIGINAL, nvecs);
+  }
+
+
+
+  // A function that applies the stencil at a given level. Will apply
+  // the stencil if it exists, otherwise it'll "emulate" it via
+  // prolong, apply stencil, restrict, recursively if needed.
+  // That form is more for experimenting than for performance.
+  // At some point it'll take preconditioner flags...
+  // In math form, applies lhs = M rhs.
+  void apply_stencil(complex<double>* lhs, complex<double>* rhs, int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      if (stencil_list[i] != 0)
+      {
+        stencil_list[i]->apply_M(lhs, rhs);
+      }
+      else
+      {
+        // Recurse!
+        // This is why we carry around temporary vectors.
+
+        // Zero out a vector to prolong into, and a vector we apply into.
+        zero_vector(temp_vec_1[i-1], lattice_list[i-1]->get_size_cv());
+        zero_vector(temp_vec_2[i-1], lattice_list[i-1]->get_size_cv());
+        
+
+        // Prolong rhs into the temporary vector.
+        transfer_list[i-1]->prolong_c2f(rhs, temp_vec_1[i-1]);
+
+        // Call the stencil one level up.
+        apply_stencil(temp_vec_2[i-1], temp_vec_1[i-1], i-1);
+
+        // Restrict temporary vector into lhs.
+        transfer_list[i-1]->restrict_f2c(temp_vec_2[i-1], lhs);
+      }
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot apply stencil at level " << i << "\n";
+      return 0;
+    }
+  }
+};
 
 #endif // QMG_MULTIGRID_OBJECT
