@@ -52,10 +52,18 @@ int main(int argc, char** argv)
   const int coarse_dof = 1;
 
   // How many times to refine. 
-  const int n_refine = 2; // (64 -> 32)
+  const int n_refine = 2; // (64 -> 32 -> 16)
+
+  // Information about the solve.
+
+  // Solver tolerance.
+  const double tol = 1e-2; 
+
+  // Maximum iterations.
+  const int max_iter = 10000;
 
   // Create a lattice object for the fine lattice.
-  Lattice2D** lats = new Lattice2D*[n_refine+1]
+  Lattice2D** lats = new Lattice2D*[n_refine+1];
   lats[0] = new Lattice2D(x_len, y_len, dof);
 
   // Create a unit gauged laplace stencil.
@@ -70,7 +78,7 @@ int main(int argc, char** argv)
   // Push into MultigridMG object. 
   int curr_x_len = x_len;
   int curr_y_len = y_len;
-  Transfer2D** transfer_objs = new Transfer2D*[n_refine];
+  TransferMG** transfer_objs = new TransferMG*[n_refine];
   for (i = 1; i <= n_refine; i++)
   {
     // Update to the new lattice size.
@@ -82,7 +90,7 @@ int main(int argc, char** argv)
 
     // Create a new null vector. These are copied into local memory in the
     // transfer object, so we can create and destroy these in this loop.
-    complex<double>* null_vector = allocate_vector<complex<double>*>(lats[i-1]->get_size_cv());
+    complex<double>* null_vector = allocate_vector<complex<double>>(lats[i-1]->get_size_cv());
     constant_vector(null_vector, 1.0, lats[i-1]->get_size_cv());
 
     // Create and populate a transfer object.
@@ -95,75 +103,220 @@ int main(int argc, char** argv)
     // Arg 3: Should we construct the coarse stencil? (Not supported yet.)
     // Arg 4: What should we construct the coarse stencil from? (Not relevant yet.)
     // Arg 5: Non-block-orthogonalized null vector.
-    mg_object->push_level(lats[i], transfer_objs[i-1], false, QMG_MULTIGRID_PRECOND_ORIGINAL, &null_vector);
+    mg_object->push_level(lats[i], transfer_objs[i-1], false, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, &null_vector);
 
+    // Clean up local vector, since they get copied in.
+    deallocate_vector(&null_vector);
   }
 
-  // WRITTEN UP TO HERE
+  /////////////////////////////////////////////////////////////
+  // Alright! Let's do a solve that isn't MG preconditioned. //
+  /////////////////////////////////////////////////////////////
 
-  // Create a lattice object for the coarse lattice.
-  Lattice2D* coarse_lat = new Lattice2D(x_len/x_block, y_len/y_block, coarse_dof);
+  // We're going to solve Ax = b with Richardson iterations.
 
-  // For convenience.
-  const int fine_size_cv = lat->get_size_cv();
-  const int coarse_size_cv = coarse_lat->get_size_cv();
+  // Relaxation parameter---standard jacobi preconditioner
+  // for nd-dimensional Laplace.
+  const double relax_omega = 1.0/(2.0*lats[0]->get_nd()+mass*mass);
 
-  // Allocate 2 null vectors.
-  const int num_nvec = coarse_dof; // different names make sense in different contexts.
-  complex<double>** null_vectors = new complex<double>*[num_nvec];
-  null_vectors[0] = allocate_vector<complex<double>>(fine_size_cv);
-  null_vectors[1] = allocate_vector<complex<double>>(fine_size_cv);
+  // How many iters of relax to apply per outer loop.
+  const int n_relax = 4; 
 
-  // Create two random vectors, the first one even only, second whole lattice.
-  gaussian(null_vectors[0], fine_size_cv/2, generator);
-  zero_vector(null_vectors[0] + fine_size_cv/2, fine_size_cv/2);
-  gaussian(null_vectors[1], fine_size_cv, generator);
+  // Create a right hand side, fill with gaussian random numbers.
+  complex<double>* b = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  gaussian(b, lats[0]->get_size_cv(), generator);
+  double bnorm = sqrt(norm2sq(b, lats[0]->get_size_cv()));
+
+  // Create a place to accumulate a solution. Assume a zero initial guess.
+  complex<double>* x = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  zero_vector(x, lats[0]->get_size_cv());
+
+  // Create a place to compute Ax. Since we have a zero initial guess, this
+  // starts as zero.
+  complex<double>* Ax = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  zero_vector(Ax, lats[0]->get_size_cv());
+
+  // Create a place to store the residual. Since we have zero initial guess,
+  // the initial residual is b - Ax = b.
+  complex<double>* r = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  copy_vector(r, b, lats[0]->get_size_cv());
+
+  // Create a place to store the current residual norm.
+  double rnorm; 
+
+  // Create a place to store the error.
+  complex<double>* e = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  zero_vector(e, lats[0]->get_size_cv());
+
+  // Relax until we get sick of it.
+  for (i = 0; i < max_iter; i++)
+  {
+    // Zero the error.
+    zero_vector(e, lats[0]->get_size_cv());
+
+    // Relax on the residual via Richardson. (Looks like pre-smoothing.)
+    // e = A^{-1} r, via n_relax hits of richardson. 
+    for (j = 0; j < n_relax; j++)
+    {
+      zero_vector(Ax, lats[0]->get_size_cv());
+      mg_object->apply_stencil(Ax, e, 0); // top level stencil.
+
+      // e += omega(r - Ax)
+      caxpbypz(relax_omega, r, -relax_omega, Ax, e, lats[0]->get_size_cv());
+    }
+
+    // Update the solution.
+    cxpy(e, x, lats[0]->get_size_cv());
+
+    // Update the residual. 
+    zero_vector(Ax, lats[0]->get_size_cv());
+    mg_object->apply_stencil(Ax, e, 0); // top level stencil.
+    caxpy(-1.0, Ax, r, lats[0]->get_size_cv());
+
+    // Check norm.
+    rnorm = sqrt(norm2sq(r, lats[0]->get_size_cv()));
+    cout << "Outer step " << i << ": tolerance " << rnorm/bnorm << "\n";
+    if (rnorm/bnorm < tol)
+      break; 
+  }
+
+  // Check solution.
+  zero_vector(Ax, lats[0]->get_size_cv());
+  mg_object->apply_stencil(Ax, x, 0);
+  cout << "Check: tolerance " << sqrt(diffnorm2sq(b, Ax, lats[0]->get_size_cv()))/bnorm << "\n";
+
+  /////////////////////////////////
+  // Alright! Two level V cycle. //
+  /////////////////////////////////
+
+  // Clean up a bit.
+  zero_vector(x, lats[0]->get_size_cv());
+  zero_vector(Ax, lats[0]->get_size_cv());
+  copy_vector(r, b, lats[0]->get_size_cv());
+
+  // We need a second level version of the above vectors. 
+
+  // Create a place to compute the coarse Ae.
+  // Since we have a zero initial guess, this starts as zero.
+  complex<double>* Ae_coarse = allocate_vector<complex<double>>(lats[1]->get_size_cv());
+  zero_vector(Ae_coarse, lats[1]->get_size_cv());
+
+  // Create a place to store the coarse residual. Since we have zero initial guess,
+  // the initial residual is b - Ax = b.
+  complex<double>* r_coarse = allocate_vector<complex<double>>(lats[1]->get_size_cv());
+  zero_vector(r_coarse, lats[1]->get_size_cv());
+
+  // Create a place to store the coarse error.
+  complex<double>* e_coarse = allocate_vector<complex<double>>(lats[1]->get_size_cv());
+  zero_vector(e_coarse, lats[1]->get_size_cv());
+
+  // Create a place to prolong the coarse error into.
+  complex<double>* e_coarse_pro = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  zero_vector(e_coarse_pro, lats[0]->get_size_cv());
+
+  // Relax with a simple 2-level V cycle until we get sick of it.
+  for (i = 0; i < max_iter; i++)
+  {
+    // Zero the error.
+    zero_vector(e, lats[0]->get_size_cv());
+
+    // Relax on the residual via Richardson. (Looks like pre-smoothing.)
+    // e = A^{-1} r, via n_relax hits of richardson. 
+    for (j = 0; j < n_relax; j++)
+    {
+      zero_vector(Ax, lats[0]->get_size_cv());
+      mg_object->apply_stencil(Ax, e, 0); // top level stencil.
+
+      // e += omega(r - Ax)
+      caxpbypz(relax_omega, r, -relax_omega, Ax, e, lats[0]->get_size_cv());
+    }
+
+    // Update the solution.
+    cxpy(e, x, lats[0]->get_size_cv());
+
+    // Update the residual. 
+    zero_vector(Ax, lats[0]->get_size_cv());
+    mg_object->apply_stencil(Ax, e, 0); // top level stencil.
+    caxpy(-1.0, Ax, r, lats[0]->get_size_cv());
 
 
-  // Create Transfer class.
-  // Arg 1: Fine lattice.
-  // Arg 2: Coarse lattice.
-  // Arg 3: Null vectors. Can deduce number of them from coarse lattice.
-  //           Copies the null vectors into internal memory.
-  // Arg 4: Optional, if we should block orthonormalize. Default true.
-  TransferMG transferer(lat, coarse_lat, null_vectors, true);
+    // Go to coarse level. 
 
-  // Test prolong and restrict!
+    // Restrict the residual. 
+    zero_vector(r_coarse, lats[1]->get_size_cv());
+    mg_object->restrict_f2c(r, r_coarse, 0);
 
-  // We'll create a coarse vector and a fine vector.
-  complex<double>* coarse_cv_1 = allocate_vector<complex<double>>(coarse_size_cv);
-  zero_vector(coarse_cv_1, coarse_size_cv);
+    // Zero the coarse error.
+    zero_vector(e_coarse, lats[1]->get_size_cv());
 
-  complex<double>* coarse_cv_2 = allocate_vector<complex<double>>(coarse_size_cv);
-  zero_vector(coarse_cv_2, coarse_size_cv);
+    // Relax on the coarse residual via Richardson.
+    for (j = 0; j < n_relax; j++)
+    {
+      zero_vector(Ae_coarse, lats[1]->get_size_cv());
+      mg_object->apply_stencil(Ae_coarse, e_coarse, 1); // first level down stencil.
 
-  complex<double>* fine_cv_1 = allocate_vector<complex<double>>(fine_size_cv);
-  zero_vector(fine_cv_1, fine_size_cv);
+      // e += omega(r - Ae)
+      caxpbypz(relax_omega, r_coarse, -relax_omega, Ae_coarse, e_coarse, lats[1]->get_size_cv());
+    }
 
-  // Set coarse vector as a random vector. 
-  gaussian(coarse_cv_1, coarse_size_cv, generator);
+    // Prolong the error.
+    zero_vector(e_coarse_pro, lats[0]->get_size_cv());
+    mg_object->prolong_c2f(e_coarse, e_coarse_pro, 0);
 
-  // Check norm of original vector.
-  cout << "Norm of original coarse vector = " << sqrt(norm2sq(coarse_cv_1, coarse_size_cv)) << "\n";
+    // Update the solution (normally we'd post-smooth, but this is just a V-cycle.)
+    cxpy(e_coarse_pro, x, lats[0]->get_size_cv());
 
-  // In the Galerkin case, prolong then restrict should preserve the coarse
-  // vector. Let's verify that.
-  transferer.prolong_c2f(coarse_cv_1, fine_cv_1);
-  transferer.restrict_f2c(fine_cv_1, coarse_cv_2);
+    // Update the residual.
+    zero_vector(Ax, lats[0]->get_size_cv());
+    mg_object->apply_stencil(Ax, e_coarse_pro, 0); // top level stencil.
+    caxpy(-1.0, Ax, r, lats[0]->get_size_cv());
 
-  // Check norm, difference for prolong-restrict vector.
-  cout << "Norm of vector after prolong-restrict = " << sqrt(norm2sq(coarse_cv_2, coarse_size_cv)) << "\n";
-  cout << "Error between vectors is = " << sqrt(diffnorm2sq(coarse_cv_1, coarse_cv_2, coarse_size_cv)) << "\n";
+    // Check norm.
+    rnorm = sqrt(norm2sq(r, lats[0]->get_size_cv()));
+    cout << "V-cycle Outer step " << i << ": tolerance " << rnorm/bnorm << "\n";
+    if (rnorm/bnorm < tol)
+      break; 
+  }
 
-  // Last step: Clean up. 
-  deallocate_vector(&coarse_cv_1);
-  deallocate_vector(&coarse_cv_2);
-  deallocate_vector(&fine_cv_1);
-  deallocate_vector(&null_vectors[0]);
-  deallocate_vector(&null_vectors[1]);
-  delete[] null_vectors;
-  delete lat;
-  delete coarse_lat;
+  // Check solution.
+  zero_vector(Ax, lats[0]->get_size_cv());
+  mg_object->apply_stencil(Ax, x, 0);
+  cout << "V-cycle Check: tolerance " << sqrt(diffnorm2sq(b, Ax, lats[0]->get_size_cv()))/bnorm << "\n";
+
+  ///////////////
+  // Clean up. //
+  ///////////////
+
+  deallocate_vector(&Ae_coarse);
+  deallocate_vector(&e_coarse);
+  deallocate_vector(&r_coarse);
+  deallocate_vector(&e_coarse_pro);
+
+  deallocate_vector(&e);
+  deallocate_vector(&r);
+  deallocate_vector(&Ax);
+  deallocate_vector(&x);
+  deallocate_vector(&b);
+
+  // Delete MultigridMG.
+  delete mg_object;
+
+  // Delete transfer objects.
+  for (i = 0; i < n_refine; i++)
+  {
+    delete transfer_objs[i];
+  }
+  delete[] transfer_objs;
+
+  // Delete stencil.
+  delete laplace_op;
+
+  // Delete lattices.
+  for (i = 0; i <= n_refine; i++)
+  {
+    delete lats[i];
+  }
+  delete[] lats; 
 
   return 0;
 }

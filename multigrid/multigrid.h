@@ -127,10 +127,11 @@ public:
   ~MultigridMG()
   {
     int i;
-    
+
     // Clean up temporary vectors.
     for (i = 0; i < num_levels; i++)
     {
+
       // Deallocate temporary vectors.
       if (temp_vec_1[i] != 0) { deallocate_vector(&temp_vec_1[i]); }
       if (temp_vec_2[i] != 0) { deallocate_vector(&temp_vec_2[i]); }
@@ -144,7 +145,7 @@ public:
     }
 
     // Safely clean up null vectors.
-    for (i = 0; i < num_levels+1; i++)
+    for (i = 0; i < num_levels-1; i++)
     {
       int num_null = lattice_list[i+1]->get_nc();
       if (global_null_vectors[i] != 0)
@@ -230,7 +231,7 @@ public:
     else
     {
       cout << "[QMG-ERROR]: Out of range: Null vectors level " << i << " does not exist in MultigridMG object.\n";
-      return 0;
+      return;
     }
   }
 
@@ -253,15 +254,21 @@ public:
     // Push new transfer object.
     transfer_list.push_back(new_transfer);
 
+    // Allocate new temporary vectors.
+    temp_vec_1.push_back(allocate_vector<complex<double>>(new_lat->get_size_cv()));
+    temp_vec_2.push_back(allocate_vector<complex<double>>(new_lat->get_size_cv()));
+
     // Deal with stencil.
     if (build_stencil)
     {
       cout << "[QMG-ERROR]: MultigridMG does not support building a stencil yet. Default to null.\n";
       stencil_list.push_back(0);
+      is_stencil_managed.push_back(false); // will become true
     }
     else
     {
       stencil_list.push_back(0);
+      is_stencil_managed.push_back(false);
     }
 
     // What operator are we building the stencil from?
@@ -275,12 +282,12 @@ public:
     // Copy global null vectors, if they're non-zero.
     if (nvecs != 0)
     {
-      global_null_vectors.push_back(new complex<double*>(new_lat->get_nc()));
+      global_null_vectors.push_back(new complex<double>*[new_lat->get_nc()]);
       for (int j = 0; j < new_lat->get_nc(); j++)
       {
         if (nvecs[j] != 0)
         {
-          complex<double*> tmp = allocate_vector<complex<double>*>(lattice_list[num_levels-2]->get_size_cv());
+          complex<double>* tmp = allocate_vector<complex<double>>(lattice_list[num_levels-2]->get_size_cv());
           copy_vector(tmp, nvecs[j], lattice_list[num_levels-2]->get_size_cv());
           global_null_vectors[num_levels-2][j] = tmp;
         }
@@ -343,7 +350,35 @@ public:
     else
     {
       cout << "[QMG-ERROR]: Out of range: Cannot apply stencil at level " << i << "\n";
-      return 0;
+      return;
+    }
+  }
+
+  // A function that prolongs from a coarse to a fine level at a given fine level.
+  void prolong_c2f(complex<double>* coarse_cv, complex<double>* fine_cv, int i)
+  {
+    if (i >= 0 && i < num_levels-1)
+    {
+      transfer_list[i]->prolong_c2f(coarse_cv, fine_cv);
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot apply prolong at level " << i << "\n";
+      return;
+    }
+  }
+
+  // A function that restricts from a fine to a coarse level at a given fine level.
+  void restrict_f2c(complex<double>* fine_cv, complex<double>* coarse_cv, int i)
+  {
+    if (i >= 0 && i < num_levels-1)
+    {
+      transfer_list[i]->restrict_f2c(fine_cv, coarse_cv);
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot apply prolong at level " << i << "\n";
+      return;
     }
   }
 };
