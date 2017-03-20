@@ -157,6 +157,7 @@ public:
   // Switch from an even-odd partitioned index to an x,y coordinate.
   inline void index_to_coord(int i, int& x, int& y)
   {
+    if (volume == 1) { x = y = 0; return; } // cover special case.
     int parity = (i / (volume/2)); // 0 if even, 1 if odd.
     y = i/(dims[0]/2) - parity*dims[1];
     x = 2*(i % (dims[0]/2)) + (y%2 + parity)%2;

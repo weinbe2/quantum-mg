@@ -42,7 +42,7 @@ public:
 
     // The gauged laplace doesn't have a self-interaction term besides the
     // mass, so it's just a 4 on the clover.
-    constant_vector(clover, 4, lat->get_size_cm());
+    constant_vector(clover, 4.0, lat->get_size_cm());
 
     // The hopping term is a bit more complicated, but not by much!
     zero_vector(hopping, lat->get_size_hopping());
