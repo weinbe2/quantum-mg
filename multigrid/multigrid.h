@@ -17,7 +17,6 @@
 // ** This allows the user to start storing levels in the MG object when
 //     recursively generating coarser levels.
 // * A private function to (optionaly) explicitly build the coarse stencil.
-//     NOT YET IMPLEMENTED YET.
 // ** Implemented as a flag on pushing a new level.
 // ** Should have a flag to specify if it should be built from the
 //     original operator or right block Jacobi operator.
@@ -26,8 +25,8 @@
 // * A function to prepare, solve, reconstruct right block Jacobi and, where
 //    possible, Schur preconditioned systems. 
 //    NOT YET IMPLEMENTED YET.
-// * Optional, but for convenience, two pre-allocated temporary vectors
-//    at each level.
+// * Storage for pre-allocated vectors (stored as a std::vector of ArrayStorageMG*)
+// ** Used internally and exposed externally.
 // ** This avoids allocating and deallocating temporary vectors, such as for
 //     the preconditioned functions.
 // * Optional, but for convenience, the ability to store non-block-orthogonalized
@@ -51,6 +50,7 @@ using std::vector;
 #include "lattice/lattice.h"
 #include "stencil/stencil_2d.h"
 #include "transfer/transfer.h"
+#include "storage/array_storage.h"
 #include "operators/coarse.h"
 
 class MultigridMG
@@ -81,10 +81,8 @@ private:
   // Should have length = num_levels, and is_stencil_managed[0] = false always.
   vector<bool> is_stencil_managed; 
 
-  // Optional, but for convenience, two pre-allocated temporary vectors
-  // at each level. Should have length = num_levels.
-  vector<complex<double>*> temp_vec_1;
-  vector<complex<double>*> temp_vec_2;
+  // Storage for pre-allocated vectors. Should have length = num_levels.
+  vector< ArrayStorageMG< complex<double> >* > storage_list; 
 
   // Optionally, but for convenience, the ability to store non-block-
   // orthogonalized null vectors. Should have length = num_levels - 1.
@@ -99,9 +97,7 @@ public:
     QMG_MULTIGRID_PRECOND_RIGHT_BLOCK_JACOBI = 1, // Right block jacobi stencil.
     QMG_MULTIGRID_PRECOND_SCHUR = 2, // Schur decomposed right block jacobi stencil.
   };
-  
-public:
-  
+    
   // Constructor. Takes in fine lattice and stencil.
   // At some point, I should add a constructor which can take multiple levels
   // at once. 
@@ -113,9 +109,8 @@ public:
     // Push the fine lattice onto lattice_list.
     lattice_list.push_back(in_lat);
 
-    // Prepare the first two temporary vectors. 
-    temp_vec_1.push_back(allocate_vector<complex<double>>(lattice_list[0]->get_size_cv()));
-    temp_vec_2.push_back(allocate_vector<complex<double>>(lattice_list[0]->get_size_cv()));
+    // Prepare temporary storage. Six is a good starting point.
+    storage_list.push_back(new ArrayStorageMG<complex<double>>(in_lat->get_size_cv(), 6));
 
     // Push the fine stencil.
     stencil_list.push_back(in_stencil);
@@ -132,11 +127,13 @@ public:
     // Clean up temporary vectors.
     for (i = 0; i < num_levels; i++)
     {
-
       // Deallocate temporary vectors.
-      if (temp_vec_1[i] != 0) { deallocate_vector(&temp_vec_1[i]); }
-      if (temp_vec_2[i] != 0) { deallocate_vector(&temp_vec_2[i]); }
-      
+      if (storage_list[i] != 0)
+      {
+        delete storage_list[i];
+        storage_list[i] = 0;
+      }      
+
       // Clean up stencils that this class created.
       if (is_stencil_managed[i] && stencil_list[i] != 0)
       {
@@ -255,9 +252,8 @@ public:
     // Push new transfer object.
     transfer_list.push_back(new_transfer);
 
-    // Allocate new temporary vectors.
-    temp_vec_1.push_back(allocate_vector<complex<double>>(new_lat->get_size_cv()));
-    temp_vec_2.push_back(allocate_vector<complex<double>>(new_lat->get_size_cv()));
+    // Prepare temporary storage. Six is a good starting point.
+    storage_list.push_back(new ArrayStorageMG<complex<double>>(new_lat->get_size_cv(), 6));
 
     // Deal with stencil.
     if (build_stencil)
@@ -287,6 +283,7 @@ public:
       {
         if (nvecs[j] != 0)
         {
+          // We do NOT want these to come from the ArrayStorageMG class.
           complex<double>* tmp = allocate_vector<complex<double>>(lattice_list[num_levels-2]->get_size_cv());
           copy_vector(tmp, nvecs[j], lattice_list[num_levels-2]->get_size_cv());
           global_null_vectors[num_levels-2][j] = tmp;
@@ -330,21 +327,28 @@ public:
       else
       {
         // Recurse!
-        // This is why we carry around temporary vectors.
+
+        // Check out two temporary vectors.
+        complex<double>* pro_rhs = storage_list[i-1]->check_out();
+        complex<double>* Apro_rhs = storage_list[i-1]->check_out();
 
         // Zero out a vector to prolong into, and a vector we apply into.
-        zero_vector(temp_vec_1[i-1], lattice_list[i-1]->get_size_cv());
-        zero_vector(temp_vec_2[i-1], lattice_list[i-1]->get_size_cv());
+        zero_vector(pro_rhs, lattice_list[i-1]->get_size_cv());
+        zero_vector(Apro_rhs, lattice_list[i-1]->get_size_cv());
         
 
         // Prolong rhs into the temporary vector.
-        transfer_list[i-1]->prolong_c2f(rhs, temp_vec_1[i-1]);
+        transfer_list[i-1]->prolong_c2f(rhs, pro_rhs);
 
         // Call the stencil one level up.
-        apply_stencil(temp_vec_2[i-1], temp_vec_1[i-1], i-1);
+        apply_stencil(Apro_rhs, pro_rhs, i-1);
 
         // Restrict temporary vector into lhs.
-        transfer_list[i-1]->restrict_f2c(temp_vec_2[i-1], lhs);
+        transfer_list[i-1]->restrict_f2c(Apro_rhs, lhs);
+
+        // Return temporary vectors.
+        storage_list[i-1]->check_in(pro_rhs);
+        storage_list[i-1]->check_in(Apro_rhs);
       }
     }
     else
@@ -381,6 +385,65 @@ public:
       return;
     }
   }
+
+  // A function to check out a vector from a given level.
+  complex<double>* check_out(int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      return storage_list[i]->check_out();
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot check out vector at level " << i << ".\n";
+      return 0;
+    }
+  }
+
+  // A function to check in a vector from a given level.
+  void check_in(complex<double>* vec, int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      return storage_list[i]->check_in(vec);
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot check in vector at level " << i << ".\n";
+      return;
+    }
+  }
+
+  // A function to query the number of allocated arrays at a
+  // given level.
+  int get_storage_number_allocated(int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      return storage_list[i]->get_number_allocated();
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot query number of allocated arrays at level " << i << ".\n";
+      return -1;
+    }
+  }
+
+  // A function to query the number of checked out arrays
+  // at given level.
+  int get_storage_number_checked(int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      return storage_list[i]->get_number_checked();
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot query number of checked out arrays at level " << i << ".\n";
+      return -1;
+    }
+  }
+
 };
 
 #endif // QMG_MULTIGRID_OBJECT

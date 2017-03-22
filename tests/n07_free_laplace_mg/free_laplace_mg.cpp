@@ -24,81 +24,15 @@ using namespace std;
 #include "operators/gaugedlaplace.h"
 #include "u1/u1_utils.h"
 
-// I think we need a "stateful" MG object. This needs some design...
-// In principle, it could have pre-allocated storage, know about
-// what to do at each level: number of presmooths, preconditioning,
-// postsmooths, etc. For now, this just has storage. 
-// Right now, this is a struct of arrays. An array of structs would be
-// better: one for each level. The MultigridMG object could hold it.
-class MultigridStorage
-{
-private:
-  // Get rid of copy, assignment operator.
-  MultigridStorage(MultigridStorage const &);
-  MultigridStorage& operator=(MultigridStorage const &);
-
-  // First index: level.
-  // Second index: which vector.
-  vector< vector< complex<double>* > > vector_storage;
-
-  // Holds onto lattices for state.
-  Lattice2D** lats;
-
-public:
-
-  // Allocation constructor. Currently just specifies number of levels,
-  // how many arrays to allocate per level (should be a vector listing
-  // how many at each level, but eh).
-  // Eventually, this will take in nlevels and a lattice object, and we'd
-  // call it a day.
-  MultigridStorage(Lattice2D** lats, int nlevels, int nvecs_per_level)
-    : lats(lats)
-  {
-    for (int i = 0; i < nlevels; i++)
-    {
-      vector< complex<double>* > vec_building;
-      for (int j = 0; j < nvecs_per_level; j++)
-      {
-        vec_building.push_back(allocate_vector<complex<double>>(lats[i]->get_size_cv()));
-      }
-      vector_storage.push_back(vec_building);
-    }
-  }
-
-  // Clean up.
-  ~MultigridStorage()
-  {
-    // Deallocate memory.
-    for (unsigned int i = 0; i < vector_storage.size(); i++)
-    {
-      for (unsigned int j = 0; j < vector_storage[i].size(); j++)
-      {
-        deallocate_vector(&vector_storage[i][j]);
-      }
-    }
-  }
-
-  // Grab a temp vector. Maybe we should have a way to 'check out'
-  // and 'return' a vector? Have it give a vector and a key?
-  // This way, memory only gets allocated when it needs to, we don't
-  // have to prespecify an amount... hmmm.
-  complex<double>* get_temp_vector(int level, int num)
-  {
-    return vector_storage[level][num];
-  }
-
-};
-
 // Perform nrich Richardson iterations at a given level.
-// Solves A e = r, assuming e is zeroed, using Ae as temporary space.
-void richardson_kernel(complex<double>* e, complex<double>* r, complex<double>* Ae,
-                    vector<double>& omega, int nrich, MultigridMG* mg_obj, int level);
+// Solves A e = r, assuming e is zeroed.
+void richardson_kernel(complex<double>* e, complex<double>* r, vector<double>& omega,
+                    int nrich, MultigridMG* mg_obj, int level);
 
 // Perform one iteraiton of a V cycle using the richardson kernel.
 // Acts recursively. 
 void richardson_vcycle(complex<double>* e, complex<double>* r, vector<double>& omega,
-                    int nrich, MultigridMG* mg_obj, MultigridStorage* mg_storage,
-                    int level);
+                    int nrich, MultigridMG* mg_obj, int level);
 
 int main(int argc, char** argv)
 {
@@ -186,13 +120,6 @@ int main(int argc, char** argv)
     // Clean up local vector, since they get copied in.
     deallocate_vector(&null_vector);
   }
-
-  // Build a MultigridStorage object. This just allocates static memory
-  // for the recursive solve so we aren't allocating/deallocating space
-  // as we recurse. Eventually the MultigridStorage object will go
-  // into the MultigridMG class. 
-  // Let's pretend we need 6 vectors, we'll fix that later. 
-  MultigridStorage* mg_storage = new MultigridStorage(lats, mg_object->get_num_levels(), 6);
 
   /////////////////////////////////////////////////////////////
   // Alright! Let's do a solve that isn't MG preconditioned. //
@@ -372,10 +299,10 @@ int main(int argc, char** argv)
   // Be lazy and use power iterations to get the largest eigenvalue. //
   /////////////////////////////////////////////////////////////////////
 
-  for (j = 0; j <= n_refine; j++)
+  /*for (j = 0; j <= n_refine; j++)
   {
-    complex<double>* piter = mg_storage->get_temp_vector(j, 0);
-    complex<double>* Apiter = mg_storage->get_temp_vector(j, 1);
+    complex<double>* piter = mg_object->check_out(j);
+    complex<double>* Apiter = mg_object->check_out(j);
     gaussian(piter, lats[j]->get_size_cv(), generator);
     double nrm = sqrt(norm2sq(piter, lats[j]->get_size_cv()));
     cax(1.0/nrm, piter, lats[j]->get_size_cv());
@@ -390,7 +317,10 @@ int main(int argc, char** argv)
     }
 
     cout << "Largest eigenvalue level " << j << " approaches " << nrm << "\n";
-  }
+
+    mg_object->check_in(piter, j);
+    mg_object->check_in(Apiter, j);
+  }*/
 
   ////////////////////////////////////////
   // Last bit: A fully recursive solve! //
@@ -416,11 +346,9 @@ int main(int argc, char** argv)
 
 
   // Grab fine (level 0) residuals, errors from storage 0 and 1.
-  complex<double>* r_recursive = mg_storage->get_temp_vector(0, 0);
-  complex<double>* e_recursive = mg_storage->get_temp_vector(0, 1);
-
-  // Grab temporary space for Ae from storage 2.
-  complex<double>* Ae_recursive = mg_storage->get_temp_vector(0, 2);
+  complex<double>* r_recursive = mg_object->check_out(0);
+  complex<double>* e_recursive = mg_object->check_out(0);
+  complex<double>* Ae_recursive = mg_object->check_out(0);
 
   // Clean up a bit.
   zero_vector(x, lats[0]->get_size_cv());
@@ -432,7 +360,7 @@ int main(int argc, char** argv)
     zero_vector(e_recursive, lats[0]->get_size_cv());
 
     // Enter a v-cycle.
-    richardson_vcycle(e_recursive, r_recursive, omega_refine, n_relax, mg_object, mg_storage, 0);
+    richardson_vcycle(e_recursive, r_recursive, omega_refine, n_relax, mg_object, 0);
 
     // Update the solution.
     cxpy(e_recursive, x, lats[0]->get_size_cv());
@@ -449,7 +377,16 @@ int main(int argc, char** argv)
       break; 
   }
 
-  // Done with r_recursive, e_recursive, Ae_recursive. 
+  // Done with r_recursive, e_recursive.
+  mg_object->check_in(r_recursive, 0);
+  mg_object->check_in(e_recursive, 0);
+  mg_object->check_in(Ae_recursive, 0);
+
+  // Check number of vectors checked out.
+  for (i = 0; i <= n_refine; i++)
+  {
+    cout << "Number of vectors still checked out at level " << i << ": " << mg_object->get_storage_number_checked(i) << "\n";
+  }
 
   ///////////////
   // Clean up. //
@@ -467,9 +404,6 @@ int main(int argc, char** argv)
   deallocate_vector(&b);
 
   deallocate_vector(&unit_gauge);
-
-  // Delete MultigridStorage.
-  delete mg_storage;
 
   // Delete MultigridMG.
   delete mg_object;
@@ -496,7 +430,7 @@ int main(int argc, char** argv)
 
 // Perform nrich Richardson iterations at a given level.
 // Solves A e = r, assuming e is zeroed, using Ae as temporary space.
-void richardson_kernel(complex<double>* e, complex<double>* r, complex<double>* Ae,
+void richardson_kernel(complex<double>* e, complex<double>* r,
                       vector<double>& omega, int nrich, MultigridMG* mg_obj, int level)
 {
   // Simple check.
@@ -516,6 +450,8 @@ void richardson_kernel(complex<double>* e, complex<double>* r, complex<double>* 
 
   // Relax on the residual via Richardson. (Looks like pre-smoothing.)
   // e = A^{-1} r, via the remaining nrich-1 iterations.
+  complex<double>* Ae = mg_obj->check_out(level);
+
   for (int i = 1; i < nrich; i++)
   {
     zero_vector(Ae, vec_size);
@@ -525,71 +461,74 @@ void richardson_kernel(complex<double>* e, complex<double>* r, complex<double>* 
     caxpbypz(omega[level], r, -omega[level], Ae, e, vec_size);
   }
 
+  mg_obj->check_in(Ae, level);
+
 }
 
 // Perform one iteraiton of a V cycle using the richardson kernel.
 // Acts recursively. 
 void richardson_vcycle(complex<double>* e, complex<double>* r, vector<double>& omega,
-                    int nrich, MultigridMG* mg_obj, MultigridStorage* mg_storage,
-                    int level)
+                    int nrich, MultigridMG* mg_obj, int level)
 {
   const int fine_size = mg_obj->get_lattice(level)->get_size_cv();
 
   // If we're at the bottom level, just smooth and send it back up.
   if (level == mg_obj->get_num_levels()-1)
   {
-    // Yeah, we need check-out storage... '0' is the coarsened residual,
-    //                                    '1' is the coarsened error...
-    complex<double>* Ae = mg_storage->get_temp_vector(level, 2);
-
     // Zero out the error.
     zero_vector<complex<double>>(e, fine_size);
 
     // Kernel it up.
-    richardson_kernel(e, r, Ae, omega, nrich, mg_obj, level);
+    richardson_kernel(e, r, omega, nrich, mg_obj, level);
   }
   else // all aboard the V-cycle traiiiiiiiin.
   {
     const int coarse_size = mg_obj->get_lattice(level+1)->get_size_cv();
 
     // We need temporary vectors everywhere for mat-vecs. Grab that here.
-    complex<double>* Atmp = mg_storage->get_temp_vector(level, 2);
+    complex<double>* Atmp = mg_obj->check_out(level);
 
     // First stop: presmooth. Solve A z1 = r, form new residual r1 = r - Az1.
-    complex<double>* z1 = mg_storage->get_temp_vector(level, 3);
+    complex<double>* z1 = mg_obj->check_out(level);
     zero_vector(z1, fine_size);
-    richardson_kernel(z1, r, Atmp, omega, nrich, mg_obj, level);
+    richardson_kernel(z1, r, omega, nrich, mg_obj, level);
     zero_vector(Atmp, fine_size);
     mg_obj->apply_stencil(Atmp, z1, level);
-    complex<double>* r1 = mg_storage->get_temp_vector(level, 4);
+    complex<double>* r1 = mg_obj->check_out(level);
     caxpbyz(1.0, r, -1.0, Atmp, r1, fine_size);
 
     // Next stop! Restrict, recurse, prolong, etc.
-    complex<double>* r_coarse = mg_storage->get_temp_vector(level+1, 0);
+    complex<double>* r_coarse = mg_obj->check_out(level+1);
     zero_vector(r_coarse, coarse_size);
     mg_obj->restrict_f2c(r1, r_coarse, level);
-    // We're done with r1 (vector 4)
-    complex<double>* e_coarse = mg_storage->get_temp_vector(level+1, 1);
+    mg_obj->check_in(r1, level);
+    complex<double>* e_coarse = mg_obj->check_out(level+1);
     zero_vector(e_coarse, coarse_size);
-    richardson_vcycle(e_coarse, r_coarse, omega, nrich, mg_obj, mg_storage, level+1);
-    complex<double>* z2 = mg_storage->get_temp_vector(level, 4); 
+    richardson_vcycle(e_coarse, r_coarse, omega, nrich, mg_obj, level+1);
+    mg_obj->check_in(r_coarse, level+1);
+    complex<double>* z2 = mg_obj->check_out(level);
     zero_vector(z2, fine_size);
     mg_obj->prolong_c2f(e_coarse, z2, level);
+    mg_obj->check_in(e_coarse, level+1);
     zero_vector(e, fine_size);
     cxpyz(z1, z2, e, fine_size);
-    // We're done with z1 (vector 3), z2 (vector 4)
+    mg_obj->check_in(z1, level);
+    mg_obj->check_in(z2, level);
 
     // Last stop, post smooth. Form r2 = r - A(z1 + z2) = r - Ae, solve A z3 = r2
     zero_vector(Atmp, fine_size);
     mg_obj->apply_stencil(Atmp, e, level);
-    complex<double>* r2 = mg_storage->get_temp_vector(level, 3);
+    complex<double>* r2 = mg_obj->check_out(level);
     caxpbyz(1.0, r, -1.0, Atmp, r2, fine_size); 
-    complex<double>* z3 = mg_storage->get_temp_vector(level, 4);
+    complex<double>* z3 = mg_obj->check_out(level);
     zero_vector(z3, fine_size);
-    richardson_kernel(z3, r2, Atmp, omega, nrich, mg_obj, level);
+    richardson_kernel(z3, r2, omega, nrich, mg_obj, level);
     cxpy(z3, e, fine_size);
 
     // We're done with Atmp (vector 2), r2 (vector 3), z3 (vector 4)
+    mg_obj->check_in(Atmp, level);
+    mg_obj->check_in(r2, level);
+    mg_obj->check_in(z3, level);
 
     // And we're (theoretically) done!
   }
