@@ -136,7 +136,7 @@ int main(int argc, char** argv)
   const double tol = 1e-8; 
 
   // Maximum iterations.
-  const int max_iter = 1000;
+  const int max_iter = 100;
 
   // Create a lattice object for the fine lattice.
   Lattice2D** lats = new Lattice2D*[n_refine+1];
@@ -145,6 +145,8 @@ int main(int argc, char** argv)
   // Create a unit gauged laplace stencil.
   complex<double>* unit_gauge = allocate_vector<complex<double>>(lats[0]->get_size_gauge());
   unit_gauge_u1(unit_gauge, lats[0]);
+  // Need to change relaxation params for gauged laplace.
+  //read_gauge_u1(unit_gauge, lats[0], "../common_cfgs_u1/l64t64b60_heatbath.dat");
   GaugedLaplace2D* laplace_op = new GaugedLaplace2D(lats[0], mass*mass, unit_gauge);
 
   // Create a MultigridMG object, push top level onto it!
@@ -176,10 +178,10 @@ int main(int argc, char** argv)
     // Push a new level on the multigrid object! Also, save the global null vector.
     // Arg 1: New lattice
     // Arg 2: New transfer object (between new and prev lattice)
-    // Arg 3: Should we construct the coarse stencil? (Not supported yet.)
+    // Arg 3: Should we construct the coarse stencil?
     // Arg 4: What should we construct the coarse stencil from? (Not relevant yet.)
     // Arg 5: Non-block-orthogonalized null vector.
-    mg_object->push_level(lats[i], transfer_objs[i-1], false, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, &null_vector);
+    mg_object->push_level(lats[i], transfer_objs[i-1], true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, &null_vector);
 
     // Clean up local vector, since they get copied in.
     deallocate_vector(&null_vector);
@@ -370,7 +372,7 @@ int main(int argc, char** argv)
   // Be lazy and use power iterations to get the largest eigenvalue. //
   /////////////////////////////////////////////////////////////////////
 
-  /*for (j = 0; j <= n_refine; j++)
+  for (j = 0; j <= n_refine; j++)
   {
     complex<double>* piter = mg_storage->get_temp_vector(j, 0);
     complex<double>* Apiter = mg_storage->get_temp_vector(j, 1);
@@ -388,7 +390,7 @@ int main(int argc, char** argv)
     }
 
     cout << "Largest eigenvalue level " << j << " approaches " << nrm << "\n";
-  }*/
+  }
 
   ////////////////////////////////////////
   // Last bit: A fully recursive solve! //

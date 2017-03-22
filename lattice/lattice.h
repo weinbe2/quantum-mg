@@ -64,6 +64,7 @@ public:
   // Switch from an (x,y) coordinate to an even-odd partitioned index.
   inline int coord_to_index(int x, int y)
   {
+    if (volume == 1) return 0;
     int parity = (x+y)%2;
     int i = (y+parity*dims[1])*dims[0]/2; // find y coord piece.
     return i + (x/2)%(dims[0]/2); // add x coord piece.
@@ -84,6 +85,11 @@ public:
   {
     return dof_coord_to_index(total_dof, coord[0], coord[1], dof);
   }
+
+  inline int dof_coord_to_index(int total_dof, int i, int dof)
+  {
+    return total_dof*i + dof;
+  }
   
   // Switch from an (x,y,nc) coordinate to an even-odd partitioned index.
   inline int cv_coord_to_index(int x, int y, int c)
@@ -94,6 +100,11 @@ public:
   inline int cv_coord_to_index(int* coord, int c)
   {
     return cv_coord_to_index(coord[0], coord[1], c);
+  }
+
+  inline int cv_coord_to_index(int i, int c)
+  {
+    return nc*i + c;
   }
   
   // Switch from an (x,y,nc,nc) coordinate to an even-odd partitioned index.
@@ -106,6 +117,11 @@ public:
   {
     return cm_coord_to_index(coord[0], coord[1], c1, c2);
   }
+
+  inline int cm_coord_to_index(int i, int c1, int c2) // c1 = row, c2 = col
+  {
+    return nc*cv_coord_to_index(i,c1) + c2;
+  }
   
   // Switch from an (x,y,nc,nc,mu) coordinate to an even-odd partitioned index
   inline int gauge_coord_to_index(int x, int y, int c1, int c2, int mu)
@@ -116,6 +132,11 @@ public:
   inline int gauge_coord_to_index(int* coord, int c1, int c2, int mu)
   {
     return gauge_coord_to_index(coord[0], coord[1], c1, c2, mu);
+  }
+
+  inline int gauge_coord_to_index(int i, int c1, int c2, int mu)
+  {
+    return mu*size_cm + cm_coord_to_index(i,c1,c2);
   }
   
   // Switch from an (x,y,nc,nc,\pm mu) coordinate to an even-odd partition index.
@@ -128,6 +149,11 @@ public:
   {
     return hopping_coord_to_index(coord[0], coord[1], c1, c2, mu);
   }
+
+  inline int hopping_coord_to_index(int i, int c1, int c2, int mu)
+  {
+    return mu*size_cm + cm_coord_to_index(i,c1,c2);
+  }
   
   // Switch from an (x,y,nc,nc,munu) coordinate to an even-odd partition index.
   inline int corner_coord_to_index(int x, int y, int c1, int c2, int munu)
@@ -138,6 +164,11 @@ public:
   inline int corner_coord_to_index(int* coord, int c1, int c2, int munu)
   {
     return corner_coord_to_index(coord[0], coord[1], c1, c2, munu);
+  }
+
+  inline int corner_coord_to_index(int i, int c1, int c2, int munu)
+  {
+    return munu*size_cm + cm_coord_to_index(i,c1,c2);
   }
 
   ///////////////////////////////////////////////////////////////

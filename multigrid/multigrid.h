@@ -51,6 +51,7 @@ using std::vector;
 #include "lattice/lattice.h"
 #include "stencil/stencil_2d.h"
 #include "transfer/transfer.h"
+#include "operators/coarse.h"
 
 class MultigridMG
 {
@@ -261,9 +262,8 @@ public:
     // Deal with stencil.
     if (build_stencil)
     {
-      cout << "[QMG-ERROR]: MultigridMG does not support building a stencil yet. Default to null.\n";
-      stencil_list.push_back(0);
-      is_stencil_managed.push_back(false); // will become true
+      stencil_list.push_back(new CoarseOperator2D(new_lat, stencil_list[num_levels-2], lattice_list[num_levels-2], new_transfer));
+      is_stencil_managed.push_back(true);
     }
     else
     {

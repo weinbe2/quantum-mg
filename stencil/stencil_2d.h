@@ -416,7 +416,7 @@ public:
       return;
 
     const int nc = lat->get_nc();
-    const int vol = lat->get_size_cm();
+    const int vol = lat->get_volume();
 
     cMATxpy(clover, rhs, lhs, vol, nc, nc);
   }
@@ -450,6 +450,43 @@ public:
     cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_ODD, nc, lat);
     cMATxpy(hopping + 3*size_cm, priv_cvector, lhs, half_vol, nc, nc);
   }
+
+  // Apply the eo part of the stencil for one direction.
+  void apply_M_eo(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
+  {
+    if (hopping == 0)
+    {
+      cout << "[QMG-WARNING]: Attempt to call 'apply_M_eo' without hopping term.\n";
+      return;
+    }
+
+    const int nc = lat->get_nc();
+    const int half_vol = lat->get_volume()/2;
+    const int size_cm = lat->get_size_cm();
+
+    switch (dir)
+    {
+      case QMG_DIR_INDEX_XP1: // + xhat
+        cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_XP1, QMG_EO_FROM_ODD, nc, lat);
+        cMATxpy(hopping, priv_cvector, lhs, half_vol, nc, nc);
+        break; 
+
+      case QMG_DIR_INDEX_YP1: // + yhat
+        cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_ODD, nc, lat);
+        cMATxpy(hopping + size_cm, priv_cvector, lhs, half_vol, nc, nc);
+        break;
+
+      case QMG_DIR_INDEX_XM1: // - xhat
+        cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_ODD, nc, lat);
+        cMATxpy(hopping + 2*size_cm, priv_cvector, lhs, half_vol, nc, nc);
+        break;
+
+      case QMG_DIR_INDEX_YM1: // - yhat
+        cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_ODD, nc, lat);
+        cMATxpy(hopping + 3*size_cm, priv_cvector, lhs, half_vol, nc, nc);
+        break;
+    }
+  }
   
   // Apply the oe part of the stencil.
   void apply_M_oe(complex<double>* lhs, complex<double>* rhs)
@@ -482,6 +519,63 @@ public:
     cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_EVEN, nc, lat);
     cMATxpy(hopping + 3*size_cm + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
   }
+
+  // Apply the oe part of the stencil for one direction.
+  void apply_M_oe(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
+  {
+    if (hopping == 0)
+    {
+      cout << "[QMG-WARNING]: Attempt to call 'apply_M_oe' without hopping term.\n";
+      return;
+    }
+
+    const int nc = lat->get_nc();
+    const int half_vol = lat->get_volume()/2;
+    const int half_cv = lat->get_size_cv()/2;
+    const int size_cm = lat->get_size_cm();
+    const int half_cm = lat->get_size_cm()/2;
+
+    switch (dir)
+    {
+      case QMG_DIR_INDEX_XP1: // + xhat
+        cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_XP1, QMG_EO_FROM_EVEN, nc, lat);
+        cMATxpy(hopping + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
+        break; 
+
+      case QMG_DIR_INDEX_YP1: // + yhat
+        cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_EVEN, nc, lat);
+        cMATxpy(hopping + size_cm + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
+        break;
+
+      case QMG_DIR_INDEX_XM1: // - xhat
+        cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_EVEN, nc, lat);
+        cMATxpy(hopping + 2*size_cm + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
+        break;
+
+      case QMG_DIR_INDEX_YM1: // - yhat
+        cshift(priv_cvector, rhs, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_EVEN, nc, lat);
+        cMATxpy(hopping + 3*size_cm + half_cm, priv_cvector + half_cv, lhs + half_cv, half_vol, nc, nc);
+        break;
+    }
+  }
+
+  void apply_M_hopping(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (hopping != 0)
+    {
+      apply_M_eo(lhs, rhs);
+      apply_M_oe(lhs, rhs);
+    }
+  }
+
+  void apply_M_hopping(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
+  {
+    if (hopping != 0)
+    {
+      apply_M_eo(lhs, rhs, dir);
+      apply_M_oe(lhs, rhs, dir);
+    }
+  }
   
   // void apply_M_twolink(complex<double>* lhs, complex<double>* rhs);
   // void apply_M_corner(complex<double>* lhs, complex<double>* rhs);
@@ -491,6 +585,26 @@ public:
   {
     // Get size of a LatticeColorVector
     int cv = lat->get_size_cv();
+
+    if (lat->get_volume() == 1) // This corner case is annoying.
+    {
+      if (lat->get_nc() % 2 == 0)
+      {
+        for (int c = 0; c < lat->get_nc()/2; c++)
+        {
+          lhs[c] += (shift+eo_shift+dof_shift)*rhs[c];
+          lhs[c+lat->get_nc()/2] += (shift+eo_shift-dof_shift)*rhs[c];
+        }
+      }
+      else
+      {
+        for (int c = 0; c < lat->get_nc(); c++)
+        {
+          lhs[c] += (shift+eo_shift)*rhs[c];
+        }
+      }
+      return;
+    }
 
     // Apply shift and eo_shift to even sites.
     caxpy(shift+eo_shift, rhs, lhs, cv/2);
@@ -543,6 +657,23 @@ public:
   //   and build a normal stencil from two one-link stencils.
   // void build_M_dagger_stencil(Stencil2D* orig_stenc); 
   // void build_M_dagger_M_stencil(Stencil2D* orig_stenc);
+
+
+  // Functions to return the shifts.
+  complex<double> get_shift()
+  {
+    return shift;
+  }
+
+  complex<double> get_shift_eo()
+  {
+    return eo_shift;
+  }
+
+  complex<double> get_shift_dof()
+  {
+    return dof_shift;
+  }
 };
 
 // Special C function wrappers for stencil applications.
