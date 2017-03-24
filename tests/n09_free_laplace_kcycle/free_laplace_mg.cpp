@@ -1,6 +1,5 @@
 // Copyright (c) 2017 Evan S Weinberg
-// A test of an algebraic V-cycle for the free laplace equation.
-// Just uses relaxation, so not a K-cycle!
+// A test of a geometric K-cycle for the free laplace equation.
 
 #include <iostream>
 #include <iomanip>
@@ -13,6 +12,7 @@ using namespace std;
 
 // QLINALG
 #include "blas/generic_vector.h"
+#include "inverters/generic_gcr_var_precond.h"
 
 // QMG
 #include "lattice/lattice.h"
@@ -23,6 +23,78 @@ using namespace std;
 // Grab laplace operator (we just use unit gauge fields -> free laplace)
 #include "operators/gaugedlaplace.h"
 #include "u1/u1_utils.h"
+
+// Maybe we want to put this directly into MultigridMG, but for now,
+// this is a wrapper struct that contains MultigridMG as well
+// as the current level.
+class StatefulMultigridMG
+{
+private:
+  // Get rid of copy, assignment.
+  StatefulMultigridMG(StatefulMultigridMG const &);
+  StatefulMultigridMG& operator=(StatefulMultigridMG const &);
+
+  // Internal variables.
+  MultigridMG* mg_object;
+  int current_level;
+
+public:
+
+  // Simple constructor.
+  StatefulMultigridMG(MultigridMG* mg_object, int current_level = 0)
+    : mg_object(mg_object), current_level(current_level) { ; }
+
+  // Get multigrid object
+  MultigridMG* get_multigrid_object()
+  {
+    return mg_object;
+  }
+
+  // Set the multigrid level.
+  void set_multigrid_level(int level)
+  {
+    if (level >= 0 && level < mg_object->get_num_levels())
+    {
+      current_level = level;
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: StatefulMultigridMG->current_level " << level << " is outside of [0,max_level-1].\n";
+    }
+  }
+
+  // Go one level finer.
+  void go_finer()
+  {
+    if (level > 0)
+    {
+      current_level--;
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot go finer than the top level in StatefulMultigridMG.\n";
+    }
+  }
+
+  // Go one level coarser.
+  void go_coarser()
+  {
+    if (level < mg_object->get_num_levels()-1)
+    {
+      current_level++;
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot go coarser than the second-coarsest level in StatefulMultigridMG.\n";
+    }
+  }
+
+  // Get the level.
+  int get_multigrid_level()
+  {
+    return current_level;
+  }
+}
 
 // Perform nrich Richardson iterations at a given level.
 // Solves A e = r, assuming e is zeroed.
@@ -62,7 +134,7 @@ int main(int argc, char** argv)
   const int coarse_dof = 1;
 
   // How many times to refine. 
-  const int n_refine = 6; // (64 -> 32 -> 16 -> 8 -> 4 -> 2 -> 1)
+  const int n_refine = 5; // (64 -> 32 -> 16 -> 8 -> 4 -> 2)
 
   // Information about the solve.
 
@@ -70,7 +142,10 @@ int main(int argc, char** argv)
   const double tol = 1e-8; 
 
   // Maximum iterations.
-  const int max_iter = 100;
+  const int max_iter = 1000;
+
+  // Restart frequency
+  const int restart_freq = 32;
 
   // Create a lattice object for the fine lattice.
   Lattice2D** lats = new Lattice2D*[n_refine+1];
@@ -121,289 +196,92 @@ int main(int argc, char** argv)
     deallocate_vector(&null_vector);
   }
 
-  /////////////////////////////////////////////////////////////
-  // Alright! Let's do a solve that isn't MG preconditioned. //
-  /////////////////////////////////////////////////////////////
+  // Create a StatefulMultigridMG. The multigrid solver uses this because
+  // it has some extra functions to track a recursive MG solve.
+  StatefulMultigridMG stateful_mg_object = new StatefulMultigridMG(mg_object);
 
-  // We're going to solve Ax = b with Richardson iterations.
-
-  // Relaxation parameter---standard jacobi preconditioner
-  // for nd-dimensional Laplace.
-  const double relax_omega = 1.5/(4.0*lats[0]->get_nd()+mass*mass);
-
-  // How many iters of relax to apply per outer loop.
-  const int n_relax = 10; 
+  ////////////////////
+  // K-cycle solve! //
+  ////////////////////
 
   // Create a right hand side, fill with gaussian random numbers.
-  complex<double>* b = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  //complex<double>* b = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  complex<double>* b = mg_object->check_out(0);
   gaussian(b, lats[0]->get_size_cv(), generator);
   double bnorm = sqrt(norm2sq(b, lats[0]->get_size_cv()));
 
   // Create a place to accumulate a solution. Assume a zero initial guess.
-  complex<double>* x = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  complex<double>* x = mg_object->check_out(0);
   zero_vector(x, lats[0]->get_size_cv());
 
   // Create a place to compute Ax. Since we have a zero initial guess, this
   // starts as zero.
-  complex<double>* Ax = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  complex<double>* Ax = mg_object->check_out(0);
   zero_vector(Ax, lats[0]->get_size_cv());
 
   // Create a place to store the residual. Since we have zero initial guess,
   // the initial residual is b - Ax = b.
-  complex<double>* r = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  complex<double>* r = mg_object->check_out(0);
   copy_vector(r, b, lats[0]->get_size_cv());
 
   // Create a place to store the current residual norm.
   double rnorm; 
 
-  // Create a place to store the error.
-  complex<double>* e = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+   // Create a place to store the error.
+  complex<double>* e = mg_object->check_out(0);
   zero_vector(e, lats[0]->get_size_cv());
 
-  // Relax until we get sick of it.
+  // Run a VPGCR solve!
+  minv_vector_gcr_var_precond_restart(x, b, lats[0]->get_size_cv(),
+              max_iter, tol, restart_freq,
+              apply_stencil_2D_M, (void*)&mg_object->get_stencil(i),
+              mg_preconditioner, (void*)&stateful_mg_object); //, &verb); 
+
+  apply_stencil_2D_M(x, b, void* extra_data)
+
   for (i = 0; i < max_iter; i++)
   {
     // Zero the error.
     zero_vector(e, lats[0]->get_size_cv());
-
-    // Relax on the residual via Richardson. (Looks like pre-smoothing.)
-    // e = A^{-1} r, via n_relax hits of richardson. 
-    for (j = 0; j < n_relax; j++)
-    {
-      zero_vector(Ax, lats[0]->get_size_cv());
-      mg_object->apply_stencil(Ax, e, 0); // top level stencil.
-
-      // e += omega(r - Ax)
-      caxpbypz(relax_omega, r, -relax_omega, Ax, e, lats[0]->get_size_cv());
-    }
-
-    // Update the solution.
-    cxpy(e, x, lats[0]->get_size_cv());
-
-    // Update the residual. 
-    zero_vector(Ax, lats[0]->get_size_cv());
-    mg_object->apply_stencil(Ax, e, 0); // top level stencil.
-    caxpy(-1.0, Ax, r, lats[0]->get_size_cv());
-
-    // Check norm.
-    rnorm = sqrt(norm2sq(r, lats[0]->get_size_cv()));
-    cout << "Outer step " << i << ": tolerance " << rnorm/bnorm << "\n";
-    if (rnorm/bnorm < tol)
-      break; 
-  }
-
-  // Check solution.
-  zero_vector(Ax, lats[0]->get_size_cv());
-  mg_object->apply_stencil(Ax, x, 0);
-  cout << "Check: tolerance " << sqrt(diffnorm2sq(b, Ax, lats[0]->get_size_cv()))/bnorm << "\n";
-
-  /////////////////////////////////
-  // Alright! Two level V cycle. //
-  /////////////////////////////////
-
-  // Clean up a bit.
-  zero_vector(x, lats[0]->get_size_cv());
-  zero_vector(Ax, lats[0]->get_size_cv());
-  copy_vector(r, b, lats[0]->get_size_cv());
-
-  // We need a second level version of the above vectors. 
-
-  // Create a place to compute the coarse Ae.
-  // Since we have a zero initial guess, this starts as zero.
-  complex<double>* Ae_coarse = allocate_vector<complex<double>>(lats[1]->get_size_cv());
-  zero_vector(Ae_coarse, lats[1]->get_size_cv());
-
-  // Create a place to store the coarse residual. Since we have zero initial guess,
-  // the initial residual is b - Ax = b.
-  complex<double>* r_coarse = allocate_vector<complex<double>>(lats[1]->get_size_cv());
-  zero_vector(r_coarse, lats[1]->get_size_cv());
-
-  // Create a place to store the coarse error.
-  complex<double>* e_coarse = allocate_vector<complex<double>>(lats[1]->get_size_cv());
-  zero_vector(e_coarse, lats[1]->get_size_cv());
-
-  // Create a place to prolong the coarse error into.
-  complex<double>* e_coarse_pro = allocate_vector<complex<double>>(lats[0]->get_size_cv());
-  zero_vector(e_coarse_pro, lats[0]->get_size_cv());
-
-  // Relax with a simple 2-level V cycle until we get sick of it.
-  for (i = 0; i < max_iter; i++)
-  {
-    // Zero the error.
-    zero_vector(e, lats[0]->get_size_cv());
-
-    // Relax on the residual via Richardson. (Looks like pre-smoothing.)
-    // e = A^{-1} r, via n_relax hits of richardson. 
-    for (j = 0; j < n_relax; j++)
-    {
-      zero_vector(Ax, lats[0]->get_size_cv());
-      mg_object->apply_stencil(Ax, e, 0); // top level stencil.
-
-      // e += omega(r - Ax)
-      caxpbypz(relax_omega, r, -relax_omega, Ax, e, lats[0]->get_size_cv());
-    }
-
-    // Update the solution.
-    cxpy(e, x, lats[0]->get_size_cv());
-
-    // Update the residual. 
-    zero_vector(Ax, lats[0]->get_size_cv());
-    mg_object->apply_stencil(Ax, e, 0); // top level stencil.
-    caxpy(-1.0, Ax, r, lats[0]->get_size_cv());
-
-
-    // Go to coarse level. 
-
-    // Restrict the residual. 
-    zero_vector(r_coarse, lats[1]->get_size_cv());
-    mg_object->restrict_f2c(r, r_coarse, 0);
-
-    // Zero the coarse error.
-    zero_vector(e_coarse, lats[1]->get_size_cv());
-
-    // Relax on the coarse residual via Richardson.
-    for (j = 0; j < n_relax; j++)
-    {
-      zero_vector(Ae_coarse, lats[1]->get_size_cv());
-      mg_object->apply_stencil(Ae_coarse, e_coarse, 1); // first level down stencil.
-
-      // e += omega(r - Ae)
-      caxpbypz(relax_omega, r_coarse, -relax_omega, Ae_coarse, e_coarse, lats[1]->get_size_cv());
-    }
-
-    // Prolong the error.
-    zero_vector(e_coarse_pro, lats[0]->get_size_cv());
-    mg_object->prolong_c2f(e_coarse, e_coarse_pro, 0);
-
-    // Update the solution (normally we'd post-smooth, but this is just a V-cycle.)
-    cxpy(e_coarse_pro, x, lats[0]->get_size_cv());
-
-    // Update the residual.
-    zero_vector(Ax, lats[0]->get_size_cv());
-    mg_object->apply_stencil(Ax, e_coarse_pro, 0); // top level stencil.
-    caxpy(-1.0, Ax, r, lats[0]->get_size_cv());
-
-    // Check norm.
-    rnorm = sqrt(norm2sq(r, lats[0]->get_size_cv()));
-    cout << "V-cycle Outer step " << i << ": tolerance " << rnorm/bnorm << "\n";
-    if (rnorm/bnorm < tol)
-      break; 
-  }
-
-  // Check solution.
-  zero_vector(Ax, lats[0]->get_size_cv());
-  mg_object->apply_stencil(Ax, x, 0);
-  cout << "V-cycle Check: tolerance " << sqrt(diffnorm2sq(b, Ax, lats[0]->get_size_cv()))/bnorm << "\n";
-
-  /////////////////////////////////////////////////////////////////////
-  // Be lazy and use power iterations to get the largest eigenvalue. //
-  /////////////////////////////////////////////////////////////////////
-
-  /*for (j = 0; j <= n_refine; j++)
-  {
-    complex<double>* piter = mg_object->check_out(j);
-    complex<double>* Apiter = mg_object->check_out(j);
-    gaussian(piter, lats[j]->get_size_cv(), generator);
-    double nrm = sqrt(norm2sq(piter, lats[j]->get_size_cv()));
-    cax(1.0/nrm, piter, lats[j]->get_size_cv());
-
-    // do some large number of iterations
-    for (i = 0; i < 10000; i++)
-    {
-      zero_vector(Apiter, lats[j]->get_size_cv());
-      mg_object->apply_stencil(Apiter, piter, j);
-      nrm = re_dot(piter, Apiter, lats[j]->get_size_cv());
-      caxy(1.0/sqrt(norm2sq(Apiter, lats[j]->get_size_cv())), Apiter, piter, lats[j]->get_size_cv());
-    }
-
-    cout << "Largest eigenvalue level " << j << " approaches " << nrm << "\n";
-
-    mg_object->check_in(piter, j);
-    mg_object->check_in(Apiter, j);
-  }*/
-
-  ////////////////////////////////////////
-  // Last bit: A fully recursive solve! //
-  ////////////////////////////////////////
-
-  // Set up the relaxation parameters at each level.
-  // The maximum eigenvalue shrinks by a factor of blocksize
-  // each refinement (except for the additive mass).
-  vector<double> omega_refine;
-  double factor = 1.0; // division factor.
-  for (i = 0; i <= n_refine; i++)
-  {
-    if (lats[i]->get_volume() == 1)
-    {
-      omega_refine.push_back(1.0/(mass*mass)); // solve it exactly
-    }
-    else
-    {
-      omega_refine.push_back(1.33333333333333/(4.0*lats[0]->get_nd()*factor+mass*mass));
-      factor /= ((double)x_block);
-    }
-  }
-
-
-  // Grab fine (level 0) residuals, errors.
-  complex<double>* r_recursive = mg_object->check_out(0);
-  complex<double>* e_recursive = mg_object->check_out(0);
-  complex<double>* Ae_recursive = mg_object->check_out(0);
-
-  // Clean up a bit.
-  zero_vector(x, lats[0]->get_size_cv());
-  copy_vector(r_recursive, b, lats[0]->get_size_cv());
-
-  for (i = 0; i < max_iter; i++)
-  {
-    // Zero the error.
-    zero_vector(e_recursive, lats[0]->get_size_cv());
 
     // Enter a v-cycle.
-    richardson_vcycle(e_recursive, r_recursive, omega_refine, n_relax, mg_object, 0);
+    richardson_vcycle(e, r, omega_refine, n_relax, mg_object, 0);
 
     // Update the solution.
-    cxpy(e_recursive, x, lats[0]->get_size_cv());
+    cxpy(e, x, lats[0]->get_size_cv());
 
     // Update the residual.
-    zero_vector(Ae_recursive, lats[0]->get_size_cv());
-    mg_object->apply_stencil(Ae_recursive, e_recursive, 0); // top level.
-    caxpy(-1.0, Ae_recursive, r_recursive, lats[0]->get_size_cv());
+    zero_vector(Ae, lats[0]->get_size_cv());
+    mg_object->apply_stencil(Ae, e, 0); // top level.
+    caxpy(-1.0, Ae, r, lats[0]->get_size_cv());
 
     // Check norm.
-    rnorm = sqrt(norm2sq(r_recursive, lats[0]->get_size_cv()));
+    rnorm = sqrt(norm2sq(r, lats[0]->get_size_cv()));
     cout << "Full V-cycle Outer step " << i << ": tolerance " << rnorm/bnorm << "\n";
     if (rnorm/bnorm < tol)
       break; 
   }
 
-  // Done with r_recursive, e_recursive.
-  mg_object->check_in(r_recursive, 0);
-  mg_object->check_in(e_recursive, 0);
-  mg_object->check_in(Ae_recursive, 0);
+  // Check solution.
+  zero_vector(Ax, lats[0]->get_size_cv());
+  mg_object->apply_stencil(Ax, x, 0);
+  cout << "Check tolerance " << sqrt(diffnorm2sq(b, Ax, lats[0]->get_size_cv()))/bnorm << "\n";
 
-  // Check number of vectors checked out.
-  for (i = 0; i <= n_refine; i++)
-  {
-    cout << "Number of vectors still checked out at level " << i << ": " << mg_object->get_storage_number_checked(i) << "\n";
-  }
+  // Check vectors back in.
+  mg_object->check_in(e, 0);
+  mg_object->check_in(r, 0);
+  mg_object->check_in(Ax, 0);
+  mg_object->check_in(x, 0);
+  mg_object->check_in(b, 0);
 
   ///////////////
   // Clean up. //
   ///////////////
 
-  deallocate_vector(&Ae_coarse);
-  deallocate_vector(&e_coarse);
-  deallocate_vector(&r_coarse);
-  deallocate_vector(&e_coarse_pro);
-
-  deallocate_vector(&e);
-  deallocate_vector(&r);
-  deallocate_vector(&Ax);
-  deallocate_vector(&x);
-  deallocate_vector(&b);
-
   deallocate_vector(&unit_gauge);
+
+  // Delete StatefulMultigridMG.
+  delete stateful_mg_object;
 
   // Delete MultigridMG.
   delete mg_object;
