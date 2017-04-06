@@ -210,6 +210,20 @@ public:
     }
   }
 
+  // Get the storage object at a level i.
+  inline ArrayStorageMG<complex<double>>* get_storage(int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      return storage_list[i];
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Array storage object level " << i << " does not exist in MultigridMG object.\n";
+      return 0;
+    }
+  }
+
   // Public function copying saved null vectors into a given array of vectors.
   void get_global_null_vectors(int i, complex<double>** out_vectors)
   {

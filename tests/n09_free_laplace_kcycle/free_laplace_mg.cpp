@@ -12,6 +12,7 @@ using namespace std;
 
 // QLINALG
 #include "blas/generic_vector.h"
+#include "inverters/generic_gcr.h"
 #include "inverters/generic_gcr_var_precond.h"
 
 // QMG
@@ -66,7 +67,7 @@ public:
   // Go one level finer.
   void go_finer()
   {
-    if (level > 0)
+    if (current_level > 0)
     {
       current_level--;
     }
@@ -79,7 +80,7 @@ public:
   // Go one level coarser.
   void go_coarser()
   {
-    if (level < mg_object->get_num_levels()-1)
+    if (current_level < mg_object->get_num_levels()-2)
     {
       current_level++;
     }
@@ -94,7 +95,9 @@ public:
   {
     return current_level;
   }
-}
+};
+
+void mg_preconditioner(complex<double>* lhs, complex<double>* rhs, int size, void* extra_data, inversion_verbose_struct* verb = 0);
 
 // Perform nrich Richardson iterations at a given level.
 // Solves A e = r, assuming e is zeroed.
@@ -109,7 +112,7 @@ void richardson_vcycle(complex<double>* e, complex<double>* r, vector<double>& o
 int main(int argc, char** argv)
 {
   // Iterators.
-  int i, j; 
+  int i;
 
   // Set output precision to be long.
   cout << setprecision(20);
@@ -118,12 +121,12 @@ int main(int argc, char** argv)
   std::mt19937 generator (1337u);
 
   // Basic information for fine level.
-  const int x_len = 64;
-  const int y_len = 64;
+  const int x_len = 128;
+  const int y_len = 128;
   const int dof = 1; 
 
   // Information on the Laplace operator.
-  const double mass = 0.01;
+  const double mass = 0.001;
 
   // Blocking size.
   const int x_block = 2;
@@ -134,7 +137,7 @@ int main(int argc, char** argv)
   const int coarse_dof = 1;
 
   // How many times to refine. 
-  const int n_refine = 5; // (64 -> 32 -> 16 -> 8 -> 4 -> 2)
+  const int n_refine = 7; // (64 -> 32 -> 16 -> 8 -> 4 -> 2)
 
   // Information about the solve.
 
@@ -146,6 +149,16 @@ int main(int argc, char** argv)
 
   // Restart frequency
   const int restart_freq = 32;
+
+  // Somewhere to solve inversion info.
+  inversion_info invif;
+
+  // Verbosity.
+  inversion_verbose_struct verb;
+  verb.verbosity = VERB_DETAIL;
+  verb.verb_prefix = "Level 0: ";
+  verb.precond_verbosity = VERB_NONE; //VERB_DETAIL;
+  verb.precond_verb_prefix = "Prec ";
 
   // Create a lattice object for the fine lattice.
   Lattice2D** lats = new Lattice2D*[n_refine+1];
@@ -198,11 +211,9 @@ int main(int argc, char** argv)
 
   // Create a StatefulMultigridMG. The multigrid solver uses this because
   // it has some extra functions to track a recursive MG solve.
-  StatefulMultigridMG stateful_mg_object = new StatefulMultigridMG(mg_object);
+  StatefulMultigridMG* stateful_mg_object = new StatefulMultigridMG(mg_object);
 
-  ////////////////////
-  // K-cycle solve! //
-  ////////////////////
+  // Prepare storage and a guess right hand side.
 
   // Create a right hand side, fill with gaussian random numbers.
   //complex<double>* b = allocate_vector<complex<double>>(lats[0]->get_size_cv());
@@ -219,48 +230,38 @@ int main(int argc, char** argv)
   complex<double>* Ax = mg_object->check_out(0);
   zero_vector(Ax, lats[0]->get_size_cv());
 
-  // Create a place to store the residual. Since we have zero initial guess,
-  // the initial residual is b - Ax = b.
-  complex<double>* r = mg_object->check_out(0);
-  copy_vector(r, b, lats[0]->get_size_cv());
+  ///////////////////
+  // Non-MG solve! //
+  ///////////////////
+  /*invif = minv_vector_gcr_restart(x, b, lats[0]->get_size_cv(),
+              max_iter, tol, restart_freq,
+              apply_stencil_2D_M, (void*)mg_object->get_stencil(0));
 
-  // Create a place to store the current residual norm.
-  double rnorm; 
+  cout << "Simple GCR solve " << (invif.success ? "converged" : "failed to converge")
+          << " in " << invif.iter << " iterations with alleged tolerance "
+          << sqrt(invif.resSq)/bnorm << ".\n";
+  zero_vector(Ax, lats[0]->get_size_cv());
+  mg_object->apply_stencil(Ax, x, 0);
+  cout << "Check tolerance " << sqrt(diffnorm2sq(b, Ax, lats[0]->get_size_cv()))/bnorm << "\n";
+  */
 
-   // Create a place to store the error.
-  complex<double>* e = mg_object->check_out(0);
-  zero_vector(e, lats[0]->get_size_cv());
+  ////////////////////
+  // K-cycle solve! //
+  ////////////////////
+
+  // Reset values.
+  zero_vector(x, lats[0]->get_size_cv());
+  zero_vector(Ax, lats[0]->get_size_cv());
 
   // Run a VPGCR solve!
-  minv_vector_gcr_var_precond_restart(x, b, lats[0]->get_size_cv(),
+  invif = minv_vector_gcr_var_precond_restart(x, b, lats[0]->get_size_cv(),
               max_iter, tol, restart_freq,
-              apply_stencil_2D_M, (void*)&mg_object->get_stencil(i),
-              mg_preconditioner, (void*)&stateful_mg_object); //, &verb); 
+              apply_stencil_2D_M, (void*)mg_object->get_stencil(0),
+              mg_preconditioner, (void*)stateful_mg_object, &verb); 
 
-  apply_stencil_2D_M(x, b, void* extra_data)
-
-  for (i = 0; i < max_iter; i++)
-  {
-    // Zero the error.
-    zero_vector(e, lats[0]->get_size_cv());
-
-    // Enter a v-cycle.
-    richardson_vcycle(e, r, omega_refine, n_relax, mg_object, 0);
-
-    // Update the solution.
-    cxpy(e, x, lats[0]->get_size_cv());
-
-    // Update the residual.
-    zero_vector(Ae, lats[0]->get_size_cv());
-    mg_object->apply_stencil(Ae, e, 0); // top level.
-    caxpy(-1.0, Ae, r, lats[0]->get_size_cv());
-
-    // Check norm.
-    rnorm = sqrt(norm2sq(r, lats[0]->get_size_cv()));
-    cout << "Full V-cycle Outer step " << i << ": tolerance " << rnorm/bnorm << "\n";
-    if (rnorm/bnorm < tol)
-      break; 
-  }
+  cout << "Multigrid " << (invif.success ? "converged" : "failed to converge")
+          << " in " << invif.iter << " iterations with alleged tolerance "
+          << sqrt(invif.resSq)/bnorm << ".\n";
 
   // Check solution.
   zero_vector(Ax, lats[0]->get_size_cv());
@@ -268,8 +269,6 @@ int main(int argc, char** argv)
   cout << "Check tolerance " << sqrt(diffnorm2sq(b, Ax, lats[0]->get_size_cv()))/bnorm << "\n";
 
   // Check vectors back in.
-  mg_object->check_in(e, 0);
-  mg_object->check_in(r, 0);
   mg_object->check_in(Ax, 0);
   mg_object->check_in(x, 0);
   mg_object->check_in(b, 0);
@@ -306,108 +305,119 @@ int main(int argc, char** argv)
   return 0;
 }
 
-// Perform nrich Richardson iterations at a given level.
-// Solves A e = r, assuming e is zeroed, using Ae as temporary space.
-void richardson_kernel(complex<double>* e, complex<double>* r,
-                      vector<double>& omega, int nrich, MultigridMG* mg_obj, int level)
+void mg_preconditioner(complex<double>* lhs, complex<double>* rhs, int size, void* extra_data, inversion_verbose_struct* verb)
 {
-  // Simple check.
-  if (nrich <= 0)
-    return;
+  // Expose the Multigrid objects.
 
-  // Get vector size.
-  const int vec_size = mg_obj->get_lattice(level)->get_size_cv();
+  // State.
+  StatefulMultigridMG* stateful_mg_object = (StatefulMultigridMG*)extra_data;
+  int level = stateful_mg_object->get_multigrid_level();
+  cout << "Entered level " << level << "\n" << flush;
 
-  // Remember, this routine assumes e is zero.
-  // This means the first iter doesn't do anything. 
-  // Just update e += omega(r - Ax) -> e += omega r.
-  caxy(omega[level], r, e, vec_size);
+  // MultigridMG.
+  MultigridMG* mg_object = stateful_mg_object->get_multigrid_object();
 
-  if (nrich == 1)
-    return; 
+  // Stencils.
+  Stencil2D* fine_stencil = mg_object->get_stencil(level);
+  Stencil2D* coarse_stencil = mg_object->get_stencil(level+1);
 
-  // Relax on the residual via Richardson. (Looks like pre-smoothing.)
-  // e = A^{-1} r, via the remaining nrich-1 iterations.
-  complex<double>* Ae = mg_obj->check_out(level);
+  // Transfer object.
+  TransferMG* transfer = mg_object->get_transfer(level);
 
-  for (int i = 1; i < nrich; i++)
+  // Storage objects.
+  ArrayStorageMG<complex<double>>* fine_storage = mg_object->get_storage(level);
+  ArrayStorageMG<complex<double>>* coarse_storage = mg_object->get_storage(level+1);
+
+  // Sizes.
+  int fine_size = mg_object->get_lattice(level)->get_size_cv();
+  int coarse_size = mg_object->get_lattice(level+1)->get_size_cv();
+
+  // Number of levels.
+  int total_num_levels = mg_object->get_num_levels();
+
+  // Verbosity and inversion info.
+  inversion_info invif;
+  inversion_verbose_struct verb2;
+  verb2.verbosity = VERB_NONE;
+  verb2.verb_prefix = "Level " + to_string(level+1) + ": ";
+  verb2.precond_verbosity = VERB_NONE; //VERB_DETAIL;
+  verb2.precond_verb_prefix = "Prec ";
+
+  // Hard code various things for now.
+  int n_pre_smooth = 2;
+  double pre_smooth_tol = 1e-15; // never
+  int n_post_smooth = 2;
+  double post_smooth_tol = 1e-15; // never
+  int coarse_max_iter = 1000000; // never
+  double coarse_tol = 0.2;
+  int coarse_restart = 32;
+
+  // We need a temporary vector for mat-vecs everywhere.
+  complex<double>* Atmp = fine_storage->check_out();
+
+  // Step 1: presmooth.
+  // Solve A z1 = rhs, form new residual r1 = rhs - A z1
+  complex<double>* z1 = fine_storage->check_out();
+  zero_vector(z1, fine_size);
+  minv_vector_gcr_restart(z1, rhs, fine_size, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_stencil_2D_M, (void*)fine_stencil);
+  zero_vector(Atmp, fine_size);
+  fine_stencil->apply_M(Atmp, z1);
+  complex<double>* r1 = fine_storage->check_out();
+  caxpbyz(1.0, rhs, -1.0, Atmp, r1, fine_size);
+
+  // Next stop: restrict, recurse (or coarsest solve), prolong.
+  complex<double>* r_coarse = coarse_storage->check_out();
+  zero_vector(r_coarse, coarse_size);
+  transfer->restrict_f2c(r1, r_coarse);
+  fine_storage->check_in(r1);
+  complex<double>* e_coarse = coarse_storage->check_out();
+  zero_vector(e_coarse, coarse_size);
+  if (level == total_num_levels-2) // if we're already on the coarsest level
   {
-    zero_vector(Ae, vec_size);
-    mg_obj->apply_stencil(Ae, e, level); // top level stencil.
-
-    // e += omega(r - Ax)
-    caxpbypz(omega[level], r, -omega[level], Ae, e, vec_size);
+    // Do coarsest solve.
+    verb2.verbosity = VERB_NONE;
+    invif = minv_vector_gcr_restart(e_coarse, r_coarse, coarse_size,
+                        coarse_max_iter, coarse_tol, coarse_restart, 
+                        apply_stencil_2D_M, (void*)coarse_stencil, &verb2);
   }
-
-  mg_obj->check_in(Ae, level);
-
-}
-
-// Perform one iteraiton of a V cycle using the richardson kernel.
-// Acts recursively. 
-void richardson_vcycle(complex<double>* e, complex<double>* r, vector<double>& omega,
-                    int nrich, MultigridMG* mg_obj, int level)
-{
-  const int fine_size = mg_obj->get_lattice(level)->get_size_cv();
-
-  // If we're at the bottom level, just smooth and send it back up.
-  if (level == mg_obj->get_num_levels()-1)
+  else
   {
-    // Zero out the error.
-    zero_vector<complex<double>>(e, fine_size);
-
-    // Kernel it up.
-    richardson_kernel(e, r, omega, nrich, mg_obj, level);
+    // Recurse.
+    stateful_mg_object->go_coarser();
+    // K cycle
+    invif = minv_vector_gcr_var_precond_restart(e_coarse, r_coarse, coarse_size,
+                        coarse_max_iter, coarse_tol, coarse_restart,
+                        apply_stencil_2D_M, (void*)coarse_stencil,
+                        mg_preconditioner, (void*)stateful_mg_object, &verb2);
+    // V cycle
+    //mg_preconditioner(e_coarse, r_coarse, coarse_size, (void*)stateful_mg_object);
+    stateful_mg_object->go_finer();
   }
-  else // all aboard the V-cycle traiiiiiiiin.
-  {
-    const int coarse_size = mg_obj->get_lattice(level+1)->get_size_cv();
+  cout << "Level " << level << " coarse preconditioner took " << invif.iter << " iterations.\n" << flush;
+  coarse_storage->check_in(r_coarse);
+  complex<double>* z2 = fine_storage->check_out();
+  zero_vector(z2, fine_size);
+  transfer->prolong_c2f(e_coarse, z2);
+  coarse_storage->check_in(e_coarse);
+  zero_vector(lhs, fine_size);
+  cxpyz(z1, z2, lhs, fine_size);
+  fine_storage->check_in(z1);
+  fine_storage->check_in(z2);
 
-    // We need temporary vectors everywhere for mat-vecs. Grab that here.
-    complex<double>* Atmp = mg_obj->check_out(level);
+  // Last stop, post smooth. Form r2 = r - A(z1 + z2) = r - Ae, solve A z3 = r2.
+  zero_vector(Atmp, fine_size);
+  fine_stencil->apply_M(Atmp, lhs);
+  complex<double>* r2 = fine_storage->check_out();
+  caxpbyz(1.0, rhs, -1.0, Atmp, r2, fine_size);
+  complex<double>* z3 = fine_storage->check_out();
+  zero_vector(z3, fine_size);
+  minv_vector_gcr(z3, r2, fine_size, n_post_smooth, post_smooth_tol, apply_stencil_2D_M, (void*)fine_stencil);
+  cxpy(z3, lhs, fine_size);
 
-    // First stop: presmooth. Solve A z1 = r, form new residual r1 = r - Az1.
-    complex<double>* z1 = mg_obj->check_out(level);
-    zero_vector(z1, fine_size);
-    richardson_kernel(z1, r, omega, nrich, mg_obj, level);
-    zero_vector(Atmp, fine_size);
-    mg_obj->apply_stencil(Atmp, z1, level);
-    complex<double>* r1 = mg_obj->check_out(level);
-    caxpbyz(1.0, r, -1.0, Atmp, r1, fine_size);
+  // Check vectors back in.
+  fine_storage->check_in(Atmp);
+  fine_storage->check_in(r2);
+  fine_storage->check_in(z3);
 
-    // Next stop! Restrict, recurse, prolong, etc.
-    complex<double>* r_coarse = mg_obj->check_out(level+1);
-    zero_vector(r_coarse, coarse_size);
-    mg_obj->restrict_f2c(r1, r_coarse, level);
-    mg_obj->check_in(r1, level);
-    complex<double>* e_coarse = mg_obj->check_out(level+1);
-    zero_vector(e_coarse, coarse_size);
-    richardson_vcycle(e_coarse, r_coarse, omega, nrich, mg_obj, level+1);
-    mg_obj->check_in(r_coarse, level+1);
-    complex<double>* z2 = mg_obj->check_out(level);
-    zero_vector(z2, fine_size);
-    mg_obj->prolong_c2f(e_coarse, z2, level);
-    mg_obj->check_in(e_coarse, level+1);
-    zero_vector(e, fine_size);
-    cxpyz(z1, z2, e, fine_size);
-    mg_obj->check_in(z1, level);
-    mg_obj->check_in(z2, level);
-
-    // Last stop, post smooth. Form r2 = r - A(z1 + z2) = r - Ae, solve A z3 = r2
-    zero_vector(Atmp, fine_size);
-    mg_obj->apply_stencil(Atmp, e, level);
-    complex<double>* r2 = mg_obj->check_out(level);
-    caxpbyz(1.0, r, -1.0, Atmp, r2, fine_size); 
-    complex<double>* z3 = mg_obj->check_out(level);
-    zero_vector(z3, fine_size);
-    richardson_kernel(z3, r2, omega, nrich, mg_obj, level);
-    cxpy(z3, e, fine_size);
-
-    // We're done with Atmp (vector 2), r2 (vector 3), z3 (vector 4)
-    mg_obj->check_in(Atmp, level);
-    mg_obj->check_in(r2, level);
-    mg_obj->check_in(z3, level);
-
-    // And we're (theoretically) done!
-  }
+  cout << "Exited level " << level << "\n" << flush;
 }
