@@ -17,7 +17,7 @@ using namespace std;
 #include "cshift/cshift_2d.h"
 #include "u1/u1_utils.h"
 
-#include "operators/staggered.h"
+#include "operators/wilson.h"
 
 int main(int argc, char** argv)
 {
@@ -29,7 +29,7 @@ int main(int argc, char** argv)
   // Basic information.
   const int x_len = 32;
   const int y_len = 32;
-  const int dof = 1;
+  const int dof = 2;
 
   // Staggered specific information.
   const double mass = 0.1;
@@ -51,20 +51,22 @@ int main(int argc, char** argv)
   zero_vector(check, cv_size);
 
   // Prepare the gauge field.
+  Lattice2D* lat_gauge = new Lattice2D(x_len, y_len, 1); // hack...
   complex<double>* gauge_field = allocate_vector<complex<double>>(lat->get_size_gauge());
-  read_gauge_u1(gauge_field, lat, "../common_cfgs_u1/l32t32b60_heatbath.dat");
-  //unit_gauge_u1(gauge_field, lat);
+  read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l32t32b60_heatbath.dat");
+  //unit_gauge_u1(gauge_field, lat_gauge);
+  delete lat_gauge; 
 
   // Create a gauged laplace stencil.
-  Staggered2D* stag_stencil = new Staggered2D(lat, mass, gauge_field);
+  Wilson2D* wilson_stencil = new Wilson2D(lat, mass, gauge_field);
 
   // Define some default params.
   int max_iter = 4000;
-  double tol = 1e-7;
+  double tol = 1e-15;
 
 
   // Get the entire spectrum.
-  arpack_dcn* arpack = new arpack_dcn(cv_size, max_iter, tol, apply_stencil_2D_M, (void*)stag_stencil);
+  arpack_dcn* arpack = new arpack_dcn(cv_size, max_iter, tol, apply_stencil_2D_M, (void*)wilson_stencil);
 
   complex<double>* eigs = new complex<double>[cv_size];
   complex<double>** evecs = new complex<double>*[cv_size];
@@ -73,7 +75,7 @@ int main(int argc, char** argv)
     evecs[i] = allocate_vector<complex<double> >(cv_size);
   }
 
-  arpack->get_entire_eigensystem(eigs, arpack_dcn::ARPACK_SMALLEST_MAGNITUDE);
+  arpack->get_entire_eigensystem(eigs, arpack_dcn::ARPACK_SMALLEST_REAL);
 
   for (int i = 0; i < cv_size; i++)
     std::cout << "Eigenvalue " << i << " has value " << eigs[i] << "\n";
@@ -92,7 +94,7 @@ int main(int argc, char** argv)
   deallocate_vector(&check);
   deallocate_vector(&gauge_field);
 
-  delete stag_stencil;
+  delete wilson_stencil;
   delete lat;
 
   return 0;

@@ -1,5 +1,5 @@
 // Copyright (c) 2017 Evan S Weinberg
-// Test of a staggered implementation.
+// Test of a Wilson implementation.
 
 #include <iostream>
 #include <iomanip>
@@ -12,27 +12,27 @@ using namespace std;
 #include "blas/generic_vector.h"
 #include "verbosity/verbosity.h"
 #include "inverters/inverter_struct.h"
-#include "inverters/generic_cg.h"
-#include "inverters/generic_gcr.h"
+#include "inverters/generic_bicgstab_l.h"
 
 // QMG
 #include "lattice/lattice.h"
 #include "cshift/cshift_2d.h"
 #include "u1/u1_utils.h"
 
-#include "operators/staggered.h"
+#include "operators/wilson.h"
 
 int main(int argc, char** argv)
 {
   // Set output to not be that long.
-  cout << setiosflags(ios::fixed) << setprecision(6);
+  cout << setiosflags(ios::scientific) << setprecision(15);
 
-  // Iterators and such.
+  // Random number generator.
+  std::mt19937 generator (1337u);
 
   // Basic information.
   const int x_len = 32;
   const int y_len = 32;
-  const int dof = 1;
+  const int dof = 2;
 
   // Staggered specific information.
   const double mass = 0.1;
@@ -54,12 +54,14 @@ int main(int argc, char** argv)
   zero_vector(check, cv_size);
 
   // Prepare the gauge field.
+  Lattice2D* lat_gauge = new Lattice2D(x_len, y_len, 1); // hack...
   complex<double>* gauge_field = allocate_vector<complex<double>>(lat->get_size_gauge());
-  read_gauge_u1(gauge_field, lat, "../common_cfgs_u1/l32t32b60_heatbath.dat");
-  //unit_gauge_u1(gauge_field, lat);
+  read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l32t32b100_heatbath.dat");
+  //unit_gauge_u1(gauge_field, lat_gauge);
+  delete lat_gauge;
 
   // Create a gauged laplace stencil.
-  Staggered2D* stag_stencil = new Staggered2D(lat, mass, gauge_field);
+  Wilson2D* wilson_stencil = new Wilson2D(lat, mass, gauge_field);
 
   // Try an inversion.
   cout << "[QMG-TEST]: Test a matrix inversion on an even point.\n";
@@ -68,20 +70,35 @@ int main(int argc, char** argv)
   rhs[lat->cv_coord_to_index(x_len/2, y_len/2, 0)] = 1.0;
   double rhs_norm = sqrt(norm2sq(rhs, cv_size));
 
+  // Set an initial guess of random noise
+  // (for whatever, I nan out when I don't do this...)
+  gaussian(lhs, cv_size, generator);
+  /*wilson_stencil->apply_M(lhs, rhs);
+  cout << lhs[lat->cv_coord_to_index(x_len/2+1, y_len/2, 0)] << "\n";
+  cout << lhs[lat->cv_coord_to_index(x_len/2+1, y_len/2, 1)] << "\n";
+  cout << lhs[lat->cv_coord_to_index(x_len/2, y_len/2+1, 0)] << "\n";
+  cout << lhs[lat->cv_coord_to_index(x_len/2, y_len/2+1, 1)] << "\n";
+  cout << lhs[lat->cv_coord_to_index(x_len/2-1, y_len/2, 0)] << "\n";
+  cout << lhs[lat->cv_coord_to_index(x_len/2-1, y_len/2, 1)] << "\n";
+  cout << lhs[lat->cv_coord_to_index(x_len/2, y_len/2-1, 0)] << "\n";
+  cout << lhs[lat->cv_coord_to_index(x_len/2, y_len/2-1, 1)] << "\n";
+  return 0;*/
+
   // Define inverter parameters.
   int max_iter = 4000;
   double tol = 1e-7;
+  int bicgstab_l = 6;
 
   // Prepare verbosity struct.
   // By default prints with high verbosity, switch to VERB_SUMMARY or VERB_NONE
   // if you want to see less.
-  inversion_verbose_struct* verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-GCR-INFO]: "));
+  inversion_verbose_struct* verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-BICGSTAB-6-INFO]: "));
 
   // Reset double output format.
   cout << setiosflags(ios::scientific) << setprecision(6);
 
-  // Perform a GCR inversion.
-  inversion_info invif = minv_vector_gcr(lhs, rhs, cv_size, max_iter, tol, apply_stencil_2D_M, (void*)stag_stencil, verb);
+  // Perform a BiCGstab-L inversion
+  inversion_info invif = minv_vector_bicgstab_l(lhs, rhs, cv_size, max_iter, tol, bicgstab_l, apply_stencil_2D_M, (void*)wilson_stencil, verb);
 
   // Check results.
   if (invif.success == true)
@@ -98,52 +115,10 @@ int main(int argc, char** argv)
   }
   cout << "[QMG-TEST]: Computing [check] = A [lhs] as a confirmation.\n";
   // Check and make sure we get the right answer.
-  stag_stencil->apply_M(check, lhs);
+  wilson_stencil->apply_M(check, lhs);
   double explicit_resid = sqrt(diffnorm2sq(rhs, check, cv_size))/rhs_norm;
   cout << "[QMG-TEST]: The relative error is " << explicit_resid << "\n";
   
-  // Try an e-o preconditioned solve.
-  cout << "[QMG-TEST]: Test an even-odd preconditioned solve.\n";
-
-  // Zero the vectors.
-  zero_vector(rhs, cv_size);
-  zero_vector(lhs, cv_size);
-  zero_vector(check, cv_size);
-
-  // Drop a few points on the rhs.
-  rhs[lat->cv_coord_to_index(x_len/2, y_len/2, 0)] = 1.0;
-  rhs[lat->cv_coord_to_index(x_len/2+1, y_len/2, 0)] = 1.0;
-  rhs_norm = sqrt(norm2sq(rhs, cv_size));
-
-  // Prepare. Use 'check' has a temporary b_new.
-  stag_stencil->prepare_b(check, rhs);
-
-  // Perform a CG inversion.
-  verb->verb_prefix = std::string("[QMG-TEST-CG-INFO]: ");
-  invif = minv_vector_cg(lhs, check, cv_size/2, max_iter, tol, apply_eo_staggered_2D_M, (void*)stag_stencil, verb);
-
-  // Check results.
-  if (invif.success == true)
-  {
-    cout << "[QMG-TEST]: Algorithm " << invif.name << " took " << invif.iter
-      << " iterations to reach a tolerance of "
-      << sqrt(invif.resSq)/rhs_norm << "\n";
-  }
-  else // failed, maybe.
-  {
-    cout << "[QMG-TEST]: Potential Error! Algorithm " << invif.name
-      << " took " << invif.iter << " iterations to reach a tolerance of "
-      << sqrt(invif.resSq)/rhs_norm << "\n";
-  }
-  cout << "[QMG-TEST]: Computing [check] = A [lhs] as a confirmation.\n";
-
-  // Check and make sure we get the right answer. Reconstruct first.
-  stag_stencil->reconstruct_x(lhs, rhs);
-  zero_vector(check, cv_size);
-  stag_stencil->apply_M(check, lhs);
-  explicit_resid = sqrt(diffnorm2sq(rhs, check, cv_size))/rhs_norm;
-  cout << "[QMG-TEST]: The relative error is " << explicit_resid << "\n";
-
   // Clean up.
   deallocate_vector(&lhs);
   deallocate_vector(&rhs);
@@ -151,7 +126,7 @@ int main(int argc, char** argv)
   deallocate_vector(&gauge_field);
 
   delete verb; 
-  delete stag_stencil;
+  delete wilson_stencil;
   delete lat;
 
   return 0;

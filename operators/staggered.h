@@ -1,8 +1,8 @@
 // Copyright (c) 2017 Evan S Weinberg
-// Test of a gauged square laplace implementation.
+// Test of a gauged staggered op implementation.
 
-#ifndef QMG_LAPLACE
-#define QMG_LAPLACE
+#ifndef QMG_STAGGERED
+#define QMG_STAGGERED
 
 #include <iostream>
 #include <complex>
@@ -36,7 +36,7 @@ public:
   {
     if (lat->get_nc() != 1)
     {
-      std::cout << "[QMG-ERROR]: Stggered2D only supports Nc = 1.\n";
+      std::cout << "[QMG-ERROR]: Staggered2D only supports Nc = 1.\n";
       return;
     }
 
