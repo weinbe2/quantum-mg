@@ -100,6 +100,36 @@ public:
     caxpy(-1.0, priv_cmatrix, hopping + 3*cm_size, cm_size);
   }
 
+  // Square laplace has one dof per site.
+  static int get_dof(int i = 0)
+  {
+    return 1;
+  }
+
+  // Square laplace has no sense of chirality.
+  static chirality_state has_chirality()
+  {
+    return QMG_CHIRAL_NO; 
+  }
+
+  // Chiral projections are uninteresting.
+  virtual void chiral_projection(complex<double>* vector, bool is_up)
+  {
+    return;
+  }
+
+  // Copy projection onto up, down.
+  virtual void chiral_projection_copy(complex<double>* orig, complex<double>* dest, bool is_up)
+  {
+    return;
+  }
+
+  // Copy the down projection into a new vector, perform the up in place.
+  virtual void chiral_projection_both(complex<double>* orig_to_up, complex<double>* down)
+  {
+    return; 
+  }
+
   // Custom functions to prepare for eo preconditioned solve.
   // b_new = (4 + m^2) b_e - D_{eo} b_o
   void prepare_b(complex<double>* b_new, complex<double>* b)

@@ -106,6 +106,53 @@ public:
     arb_local_function_vector(hopping + 3*cm_size, staggered_set_eta_y, (void*)lat, cm_size);
   }
 
+public:
+  // Abstract static functions.
+
+  // Staggered has one dof per site.
+  static int get_dof(int i = 0)
+  {
+    return 1;
+  }
+
+  // Staggered has a sense of chirality.
+  static chirality_state has_chirality()
+  {
+    return QMG_CHIRAL_TRUE; 
+  }
+
+  // Chirality is even/odd. 
+  virtual void chiral_projection(complex<double>* vector, bool is_up)
+  {
+    if (is_up)
+      zero_vector(vector+(lat->get_size_cv()/2), lat->get_size_cv()/2); // zero odd
+    else
+      zero_vector(vector, lat->get_size_cv()/2); // zero even.
+  }
+
+  // Copy projection onto up, down.
+  virtual void chiral_projection_copy(complex<double>* orig, complex<double>* dest, bool is_up)
+  {
+    if (is_up)
+    {
+      zero_vector(dest+lat->get_size_cv()/2, lat->get_size_cv()/2);
+      copy_vector(dest, orig2, lat->get_size_cv()/2);
+    }
+    else
+    {
+      zero_vector(dest, lat->get_size_cv()/2);
+      copy_vector(dest+lat->get_size_cv()/2, orig+lat->get_size_cv()/2, lat->get_size_cv()/2);
+    }
+  }
+
+  // Copy the down projection into a new vector, perform the up in place.
+  virtual void chiral_projection_both(complex<double>* orig_to_up, complex<double>* down)
+  {
+    zero_vector(down, lat->get_size_cv()/2);
+    copy_vector(down+lat->get_size_cv()/2, orig_to_up+lat->get_size_cv()/2, lat->get_size_cv()/2);
+    zero_vector(orig_to_up+lat->get_size_cv()/2, lat->get_size_cv()/2);
+  }
+
   // Custom functions to prepare for eo preconditioned solve.
   // b_new = (4 + m^2) b_e - D_{eo} b_o
   void prepare_b(complex<double>* b_new, complex<double>* b)

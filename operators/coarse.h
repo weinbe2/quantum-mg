@@ -1,5 +1,7 @@
 // Copyright (c) 2017 Evan S Weinberg
 // Create a coarse operator from another stencil and a transfer object. 
+// If chiral, top half of dof should be top chirality,
+// bottom half should be bottom chirality.
 
 #ifndef QMG_COARSE
 #define QMG_COARSE
@@ -30,6 +32,9 @@ protected:
   // Save the fine lattice.
   Lattice2D* fine_lat; 
 
+  // Is it a chiral stencil?
+  bool is_chiral; 
+
 public:
 
   // Base constructor.
@@ -39,8 +44,8 @@ public:
   // out what the stencil will look like after coarsening?
   // Also need some smart way to deal with the mass (for \gamma_5 ops)
   // Currently this function only transfers identity shifts.
-  CoarseOperator2D(Lattice2D* in_lat, Stencil2D* fine_stencil, Lattice2D* fine_lattice, TransferMG* transfer)
-    : Stencil2D(in_lat, QMG_PIECE_CLOVER_HOPPING, fine_stencil->get_shift(), 0.0, 0.0), fine_lat(fine_lattice)
+  CoarseOperator2D(Lattice2D* in_lat, Stencil2D* fine_stencil, Lattice2D* fine_lattice, TransferMG* transfer, bool is_chiral = false)
+    : Stencil2D(in_lat, QMG_PIECE_CLOVER_HOPPING, fine_stencil->get_shift(), 0.0, 0.0), fine_lat(fine_lattice), is_chiral(is_chiral)
   {
     const int coarse_vol = lat->get_volume();
     const int coarse_size = lat->get_size_cv();
@@ -381,6 +386,77 @@ public:
     deallocate_vector(&tmp_coarse);
     deallocate_vector(&tmp_fine);
     deallocate_vector(&tmp_Afine);
+  }
+
+  // The coarse operator could have any number of dof per sites.
+  static int get_dof(int i = 0)
+  {
+    return -1;
+  }
+
+  // The coarse operator might have a sense of chirality.
+  static chirality_state has_chirality()
+  {
+    return QMG_CHIRAL_UNKNOWN; 
+  }
+
+  // Chirality either does not exist or is internal dof.
+  virtual void chiral_projection(complex<double>* vector, bool is_up)
+  {
+    if (is_chiral)
+    {
+      const int nc = lat->get_nc();
+      if (is_up)
+      {
+        for (int c = 0; c < nc/2; c++)
+          zero_vector_blas(vector+nc/2+c, nc, lat->get_size_cv()/nc);
+      }
+      else
+      {
+        for (int c = 0; c < nc/2; c++)
+          zero_vector_blas(vector+c, nc, lat->get_size_cv()/nc);
+      }
+    }
+  }
+
+  // Copy projection onto up, down.
+  virtual void chiral_projection_copy(complex<double>* orig, complex<double>* dest, bool is_up)
+  {
+    if (is_chiral)
+    {
+      const int nc = lat->get_nc();
+      if (is_up)
+      {
+        for (int c = 0; c < nc/2; c++)
+        {
+          copy_vector_blas(dest+c, orig+c, nc, lat->get_size_cv()/nc);
+          zero_vector_blas(dest+nc/2+c, nc, lat->get_size_cv()/nc);
+        }
+      }
+      else
+      {
+        for (int c = 0; c < nc/2; c++)
+        {
+          copy_vector_blas(dest+nc/2+c, orig+nc/2+c, nc, lat->get_size_cv()/nc);
+          zero_vector_blas(dest+c, nc, lat->get_size_cv()/nc);
+        }
+      }
+    }
+  }
+
+  // Copy the down projection into a new vector, perform the up in place.
+  virtual void chiral_projection_both(complex<double>* orig_to_up, complex<double>* down)
+  {
+    if (is_chiral)
+    {
+      const int nc = lat->get_nc();
+      for (int c = 0; c < nc/2; c++)
+      {
+        copy_vector_blas(down+nc/2+c, orig_to_up+nc/2+c, nc, lat->get_size_cv()/nc);
+        zero_vector_blas(down+c, nc, lat->get_size_cv()/nc);
+        zero_vector_blas(orig_to_up+nc/2+c, nc, lat->get_size_cv()/nc);
+      }
+    }
   }
 
 };

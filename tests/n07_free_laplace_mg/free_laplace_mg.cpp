@@ -48,7 +48,7 @@ int main(int argc, char** argv)
   // Basic information for fine level.
   const int x_len = 64;
   const int y_len = 64;
-  const int dof = 1; 
+  const int dof = GaugedLaplace2D::get_dof(); 
 
   // Information on the Laplace operator.
   const double mass = 0.01;
@@ -113,9 +113,10 @@ int main(int argc, char** argv)
     // Arg 1: New lattice
     // Arg 2: New transfer object (between new and prev lattice)
     // Arg 3: Should we construct the coarse stencil?
-    // Arg 4: What should we construct the coarse stencil from? (Not relevant yet.)
-    // Arg 5: Non-block-orthogonalized null vector.
-    mg_object->push_level(lats[i], transfer_objs[i-1], true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, &null_vector);
+    // Arg 4: Does the operator have a sense of chirality?
+    // Arg 5: What should we construct the coarse stencil from? (Not relevant yet.)
+    // Arg 6: Non-block-orthogonalized null vector.
+    mg_object->push_level(lats[i], transfer_objs[i-1], true, false, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, &null_vector);
 
     // Clean up local vector, since they get copied in.
     deallocate_vector(&null_vector);

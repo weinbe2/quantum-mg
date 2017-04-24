@@ -248,12 +248,13 @@ public:
   // Public function to push a new level!
   // Arg 1: New lattice object.
   // Arg 2: New transfer object.
-  // Arg 3: (Not yet implemented) If we should explicitly build the new coarse stencil or not.
-  // Arg 4: (Not yet implemented) If we should build the new coarse stencil from a preconditioned
+  // Arg 3: If we should explicitly build the new coarse stencil or not.
+  // Arg 4: If the null vectors preserve/have chirality or not.
+  // Arg 5: (Not yet implemented) If we should build the new coarse stencil from a preconditioned
   //          version of the stencil a level up.
-  // Arg 5: Copy in the global null vectors. These are null vectors
+  // Arg 6: Copy in the global null vectors. These are null vectors
   //          that are not yet block orthonormalized.
-  void push_level(Lattice2D* new_lat, TransferMG* new_transfer, bool build_stencil = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, complex<double>** nvecs = 0)
+  void push_level(Lattice2D* new_lat, TransferMG* new_transfer, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, complex<double>** nvecs = 0)
   {
     // Update number of levels.
     num_levels++;
@@ -270,7 +271,7 @@ public:
     // Deal with stencil.
     if (build_stencil)
     {
-      stencil_list.push_back(new CoarseOperator2D(new_lat, stencil_list[num_levels-2], lattice_list[num_levels-2], new_transfer));
+      stencil_list.push_back(new CoarseOperator2D(new_lat, stencil_list[num_levels-2], lattice_list[num_levels-2], new_transfer, is_chiral));
       is_stencil_managed.push_back(true);
     }
     else
@@ -317,7 +318,7 @@ public:
   //          that are not yet block orthonormalized.
   void push_level(Lattice2D* new_lat, TransferMG* new_transfer,complex<double>** nvecs)
   {
-    push_level(new_lat, new_transfer, false, QMG_MULTIGRID_PRECOND_ORIGINAL, nvecs);
+    push_level(new_lat, new_transfer, false, false, QMG_MULTIGRID_PRECOND_ORIGINAL, nvecs);
   }
 
 

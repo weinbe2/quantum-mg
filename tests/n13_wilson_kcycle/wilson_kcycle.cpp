@@ -47,7 +47,7 @@ int main(int argc, char** argv)
   // Basic information for fine level.
   const int x_len = 64;
   const int y_len = 64;
-  const int dof = 2;
+  const int dof = Wilson2D::get_dof();
 
   // Information on the Wilson operator.
   double mass;
@@ -57,7 +57,7 @@ int main(int argc, char** argv)
   }
   else
   {
-    mass = -0.05;
+    mass = -0.07;
   }
 
   // Blocking size.
@@ -76,7 +76,7 @@ int main(int argc, char** argv)
   }
 
   // How many times to refine. 
-  const int n_refine = 2; // (64 -> 16 -> 4)
+  const int n_refine = 3; // (64 -> 16 -> 4 -> 1)
 
   // Information about the solve.
 
@@ -192,8 +192,6 @@ int main(int argc, char** argv)
         mg_object->get_stencil(i-1)->apply_M(Arand_guess, rand_guess);
         cax(-1.0, Arand_guess, lats[i-1]->get_size_cv());
 
-        std::cout << "About to BiCGstab-L " << j << "\n" << flush;
-
         // Solve residual equation.
         minv_vector_bicgstab_l(null_vectors[2*j], Arand_guess, lats[i-1]->get_size_cv(), 500, 5e-5, 6, apply_stencil_2D_M, (void*)mg_object->get_stencil(i-1), &verb);
 
@@ -207,8 +205,6 @@ int main(int argc, char** argv)
         // Orthogonalize against previous vectors.
         for (k = 0; k < j; k++)
           orthogonal(null_vectors[2*j], null_vectors[2*k], lats[i-1]->get_size_cv());
-
-        std::cout << "Constructed null vector " << j << "\n" << flush;
       }
 
       // Perform chiral projection. Currently hard coded.
@@ -224,7 +220,7 @@ int main(int argc, char** argv)
         copy_vector_blas(null_vectors[2*j+1]+1, null_vectors[2*j]+1, 2, lats[i-1]->get_size_cv()/2);
 
         // Zero out lower chirality components.
-        zero_vector_blas(null_vectors[2*j+1], 2, lats[i-1]->get_size_cv()/2);
+        zero_vector_blas(null_vectors[2*j]+1, 2, lats[i-1]->get_size_cv()/2);
 
         // Normalize.
         normalize(null_vectors[2*j], lats[i-1]->get_size_cv());
@@ -240,9 +236,10 @@ int main(int argc, char** argv)
     // Arg 1: New lattice
     // Arg 2: New transfer object (between new and prev lattice)
     // Arg 3: Should we construct the coarse stencil?
-    // Arg 4: What should we construct the coarse stencil from? (Not relevant yet.)
-    // Arg 5: Non-block-orthogonalized null vector.
-    mg_object->push_level(lats[i], transfer_objs[i-1], true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
+    // Arg 4: Is the operator chiral? (True for Wilson)
+    // Arg 5: What should we construct the coarse stencil from? (Not relevant yet.)
+    // Arg 6: Non-block-orthogonalized null vector.
+    mg_object->push_level(lats[i], transfer_objs[i-1], true, true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
 
     // Clean up local vector, since they get copied in.
     for (j = 0; j < coarse_dof; j++)

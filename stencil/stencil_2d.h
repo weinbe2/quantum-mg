@@ -45,6 +45,14 @@ enum stencil_pieces
   QMG_PIECE_ALL = 15,
 };
 
+// Enum for if a stencil has chirality or not.
+enum chirality_state
+{
+  QMG_CHIRAL_NO = 0,
+  QMG_CHIRAL_YES = 1,
+  QMG_CHIRAL_UNKNOWN = 2 // used for coarse operator.
+};
+
 struct Stencil2D
 {
 protected:
@@ -135,7 +143,7 @@ public:
     
   }
   
-  ~Stencil2D()
+  virtual ~Stencil2D()
   {
     if (clover != 0) { deallocate_vector(&clover); }
     if (hopping != 0) { deallocate_vector(&hopping); }
@@ -674,6 +682,37 @@ public:
   {
     return dof_shift;
   }
+
+public:
+  // Abstract static functions.
+
+  // Return the number of degrees of freedom.
+  // 'i' is for the case of Ls where the number
+  // of degrees of freedom may depend on some value
+  // passed in.
+  static int get_dof(int i = 0)
+  {
+    return -1;
+  }
+
+  // Return true if the operator has a sense of "chirality",
+  // false otherwise.
+  static chirality_state has_chirality()
+  {
+    return QMG_CHIRAL_UNKNOWN;
+  }
+
+  // A few ways to perform chiral projections.
+
+  // In place project onto up (true), down (false)
+  virtual void chiral_projection(complex<double>* vector, bool is_up) = 0;
+
+  // Copy projection onto up, down.
+  virtual void chiral_projection_copy(complex<double>* orig, complex<double>* dest, bool is_up) = 0;
+
+  // Copy the down projection into a new vector, perform the up in place.
+  virtual void chiral_projection_both(complex<double>* orig_to_up, complex<double>* down) = 0;
+
 };
 
 // Special C function wrappers for stencil applications.

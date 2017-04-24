@@ -55,6 +55,55 @@ public:
     deallocate_vector(&tmp_eo_space);
   }
 
+public:
+
+  // Abstract static functions.
+
+  // Wilson has two dof per site.
+  static int get_dof(int i = 0)
+  {
+    return 2;
+  }
+
+  // Wilson has a sense of chirality.
+  static chirality_state has_chirality()
+  {
+    return QMG_CHIRAL_YES; 
+  }
+
+  // First component per site is up, second component per site is down.
+  virtual void chiral_projection(complex<double>* vector, bool is_up)
+  {
+    if (is_up)
+      zero_vector_blas(vector+1, 2, lat->get_size_cv()/2);
+    else
+      zero_vector_blas(vector, 2, lat->get_size_cv()/2);
+  }
+
+  // Copy projection onto up, down.
+  virtual void chiral_projection_copy(complex<double>* orig, complex<double>* dest, bool is_up)
+  {
+    if (is_up)
+    {
+      zero_vector_blas(dest+1, 2, lat->get_size_cv()/2);
+      copy_vector_blas(dest, orig, 2, lat->get_size_cv()/2);
+    }
+    else
+    {
+      zero_vector_blas(dest, 2, lat->get_size_cv()/2);
+      copy_vector_blas(dest+1, orig+1, 2, lat->get_size_cv()/2);
+    }
+  }
+
+  // Copy the down projection into a new vector, perform the up in place.
+  virtual void chiral_projection_both(complex<double>* orig_to_up, complex<double>* down)
+  {
+    zero_vector_blas(down+1, 2, lat->get_size_cv()/2);
+    zero_vector_blas(down, 2, lat->get_size_cv()/2);
+    copy_vector_blas(down+1, orig_to_up+1, 2, lat->get_size_cv()/2);
+    zero_vector_blas(orig_to_up+1, 2, lat->get_size_cv()/2);
+  }
+
 };
 
 // update gauge links.
