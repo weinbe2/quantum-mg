@@ -216,9 +216,9 @@ public:
     // Verbosity and inversion info.
     inversion_info invif;
     inversion_verbose_struct verb2;
-    verb2.verbosity = VERB_NONE;
+    verb2.verbosity = VERB_DETAIL;
     verb2.verb_prefix = "Level " + to_string(level+1) + ": ";
-    verb2.precond_verbosity = VERB_NONE; //VERB_DETAIL;
+    verb2.precond_verbosity = VERB_DETAIL;
     verb2.precond_verb_prefix = "Prec ";
 
     // Get smoothing, coarse solve info structure for current level.

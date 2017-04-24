@@ -1,0 +1,380 @@
+// Copyright (c) 2017 Evan S Weinberg
+// A test of a K-cycle for the interacting
+// Wilson operator. Generates null vectors using
+// BiCGstab-L.
+
+#include <iostream>
+#include <iomanip>
+#include <complex>
+#include <cmath>
+#include <random>
+#include <vector>
+
+using namespace std;
+
+// QLINALG
+#include "blas/generic_vector.h"
+#include "inverters/generic_gcr.h"
+#include "inverters/generic_gcr_var_precond.h"
+#include "inverters/generic_bicgstab_l.h"
+
+// QMG
+#include "lattice/lattice.h"
+#include "transfer/transfer.h"
+#include "stencil/stencil_2d.h"
+#include "multigrid/stateful_multigrid.h"
+
+// Grab Wilson operator (we just use unit gauge fields -> free laplace)
+#include "operators/wilson.h"
+#include "u1/u1_utils.h"
+
+
+int main(int argc, char** argv)
+{
+  // Iterators.
+  int i,j,k;
+
+  // Are we testing the free (two exact null vectors) or
+  // interacting (four algebraic null vectors) case?
+  const bool do_free = false;
+
+  // Set output precision to be long.
+  cout << setprecision(20);
+
+  // Random number generator.
+  std::mt19937 generator (1337u);
+
+  // Basic information for fine level.
+  const int x_len = 64;
+  const int y_len = 64;
+  const int dof = 2;
+
+  // Information on the Wilson operator.
+  double mass;
+  if (do_free)
+  {
+    mass = 0.1;
+  }
+  else
+  {
+    mass = -0.05;
+  }
+
+  // Blocking size.
+  const int x_block = 4;
+  const int y_block = 4;
+
+  // Number of null vectors.
+  int coarse_dof;
+  if (do_free)
+  {
+    coarse_dof = 2;
+  }
+  else
+  {
+    coarse_dof = 8;
+  }
+
+  // How many times to refine. 
+  const int n_refine = 2; // (64 -> 16 -> 4)
+
+  // Information about the solve.
+
+  // Solver tolerance.
+  const double tol = 1e-8; 
+
+  // Maximum iterations.
+  const int max_iter = 1000;
+
+  // Restart frequency
+  const int restart_freq = 32;
+
+  // Somewhere to solve inversion info.
+  inversion_info invif;
+
+  // Verbosity.
+  inversion_verbose_struct verb;
+  verb.verbosity = VERB_DETAIL;
+  verb.verb_prefix = "Level 0: ";
+  verb.precond_verbosity = VERB_DETAIL;
+  verb.precond_verb_prefix = "Prec ";
+
+  // Create a lattice object for the fine lattice.
+  Lattice2D** lats = new Lattice2D*[n_refine+1];
+  lats[0] = new Lattice2D(x_len, y_len, dof);
+
+  // Prepare the gauge field.
+  Lattice2D* lat_gauge = new Lattice2D(x_len, y_len, 1); // hack...
+  complex<double>* gauge_field = allocate_vector<complex<double>>(lats[0]->get_size_gauge());
+  if (do_free)
+  {
+    unit_gauge_u1(gauge_field, lat_gauge);
+  }
+  else
+  {
+    switch (x_len)
+    {
+      case 32:
+        read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l32t32b60_heatbath.dat");
+        break;
+      case 64:
+        read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l64t64b60_heatbath.dat");
+        break;
+      default:
+        std::cout << "[QMG-ERROR]: Invalid lattice size.\n";
+        return -1;
+        break;
+    }
+  }
+  delete lat_gauge;
+
+  // Create a Wilson stencil.
+  Wilson2D* wilson_op = new Wilson2D(lats[0], mass, gauge_field);
+
+  // Create a MultigridMG object, push top level onto it!
+  MultigridMG* mg_object = new MultigridMG(lats[0], wilson_op);
+
+  // Create coarse lattices, unit null vectors, transfer objects.
+  // Push into MultigridMG object. 
+  int curr_x_len = x_len;
+  int curr_y_len = y_len;
+  TransferMG** transfer_objs = new TransferMG*[n_refine];
+  for (i = 1; i <= n_refine; i++)
+  {
+    // Update to the new lattice size.
+    curr_x_len /= x_block;
+    curr_y_len /= y_block;
+
+    // Create a new lattice object.
+    lats[i] = new Lattice2D(curr_x_len, curr_y_len, coarse_dof);
+
+    // Create a new null vectors. These are copied into local memory in the
+    // transfer object, so we can create and destroy these in this loop.
+    complex<double>** null_vectors = new complex<double>*[coarse_dof];
+    if (do_free)
+    {
+      // Two null vectors, one for each parity component.
+
+      // Top.
+      null_vectors[0] = allocate_vector<complex<double>>(lats[i-1]->get_size_cv());
+      zero_vector(null_vectors[0], lats[i-1]->get_size_cv());
+      constant_vector_blas(null_vectors[0], 2, 1.0, lats[i-1]->get_size_cv()/2);
+
+      // Bottom.
+      null_vectors[1] = allocate_vector<complex<double>>(lats[i-1]->get_size_cv());
+      zero_vector(null_vectors[1], lats[i-1]->get_size_cv());
+      constant_vector_blas(null_vectors[1]+1, 2, 1.0, lats[i-1]->get_size_cv()/2);
+    }
+    else
+    {
+      // Create coarse_dof null vectors.
+      for (j = 0; j < coarse_dof/2; j++)
+      {
+        // Will become up chiral projection
+        null_vectors[2*j] = allocate_vector<complex<double> >(lats[i-1]->get_size_cv());
+        zero_vector(null_vectors[2*j], lats[i-1]->get_size_cv());
+
+        // Check out vector.
+        complex<double>* rand_guess = mg_object->get_storage(i-1)->check_out();
+
+        // Fill with random numbers.
+        gaussian(rand_guess, lats[i-1]->get_size_cv(), generator);
+
+        // Make orthogonal to previous vectors.
+        for (k = 0; k < j; k++)
+          orthogonal(rand_guess, null_vectors[2*k], lats[i-1]->get_size_cv());
+
+        // Check out vector for residual equation.
+        complex<double>* Arand_guess = mg_object->get_storage(i-1)->check_out();
+
+        // Zero, form residual.
+        zero_vector(Arand_guess, lats[i-1]->get_size_cv());
+        mg_object->get_stencil(i-1)->apply_M(Arand_guess, rand_guess);
+        cax(-1.0, Arand_guess, lats[i-1]->get_size_cv());
+
+        std::cout << "About to BiCGstab-L " << j << "\n" << flush;
+
+        // Solve residual equation.
+        minv_vector_bicgstab_l(null_vectors[2*j], Arand_guess, lats[i-1]->get_size_cv(), 500, 5e-5, 6, apply_stencil_2D_M, (void*)mg_object->get_stencil(i-1), &verb);
+
+        // Undo residual equation.
+        cxpy(rand_guess, null_vectors[2*j], lats[i-1]->get_size_cv());
+
+        // Check in.
+        mg_object->get_storage(i-1)->check_in(rand_guess);
+        mg_object->get_storage(i-1)->check_in(Arand_guess);
+
+        // Orthogonalize against previous vectors.
+        for (k = 0; k < j; k++)
+          orthogonal(null_vectors[2*j], null_vectors[2*k], lats[i-1]->get_size_cv());
+
+        std::cout << "Constructed null vector " << j << "\n" << flush;
+      }
+
+      // Perform chiral projection. Currently hard coded.
+      for (j = 0; j < coarse_dof/2; j++)
+      {
+        // Get new vector.
+        null_vectors[2*j+1] = allocate_vector<complex<double> >(lats[i-1]->get_size_cv());
+
+        // Zero new vector.
+        zero_vector(null_vectors[2*j+1], lats[i-1]->get_size_cv());
+
+        // Copy lower chirality components into new vector.
+        copy_vector_blas(null_vectors[2*j+1]+1, null_vectors[2*j]+1, 2, lats[i-1]->get_size_cv()/2);
+
+        // Zero out lower chirality components.
+        zero_vector_blas(null_vectors[2*j+1], 2, lats[i-1]->get_size_cv()/2);
+
+        // Normalize.
+        normalize(null_vectors[2*j], lats[i-1]->get_size_cv());
+        normalize(null_vectors[2*j+1], lats[i-1]->get_size_cv());
+      }
+    }
+
+    // Create and populate a transfer object.
+    // Fine lattice, coarse lattice, null vector(s), perform the block ortho.
+    transfer_objs[i-1] = new TransferMG(lats[i-1], lats[i], null_vectors, true);
+
+    // Push a new level on the multigrid object! Also, save the global null vector.
+    // Arg 1: New lattice
+    // Arg 2: New transfer object (between new and prev lattice)
+    // Arg 3: Should we construct the coarse stencil?
+    // Arg 4: What should we construct the coarse stencil from? (Not relevant yet.)
+    // Arg 5: Non-block-orthogonalized null vector.
+    mg_object->push_level(lats[i], transfer_objs[i-1], true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
+
+    // Clean up local vector, since they get copied in.
+    for (j = 0; j < coarse_dof; j++)
+      deallocate_vector(&null_vectors[j]);
+    delete[] null_vectors;
+  }
+
+  // Create a StatefulMultigridMG. The multigrid solver uses this because
+  // it has some extra functions to track a recursive MG solve.
+  StatefulMultigridMG* stateful_mg_object = new StatefulMultigridMG(mg_object);
+
+  // Use the same solver info on each level.
+  const int n_pre_smooth = 2;
+  const double pre_smooth_tol = 1e-15; // never
+  const int n_post_smooth = 2;
+  const double post_smooth_tol = 1e-15; // never
+  const int coarse_max_iter = 1000000; // never
+  const double coarse_tol = 0.2;
+  const int coarse_restart = 32;
+
+  // Create the same solver struct on each level.
+  StatefulMultigridMG::LevelInfoMG** level_info_objs = new StatefulMultigridMG::LevelInfoMG*[n_refine];
+  for (i = 0; i < n_refine; i++)
+  {
+    level_info_objs[i] = new StatefulMultigridMG::LevelInfoMG();
+    level_info_objs[i]->pre_tol = pre_smooth_tol;
+    level_info_objs[i]->pre_iters = n_pre_smooth;
+    level_info_objs[i]->post_tol = post_smooth_tol;
+    level_info_objs[i]->post_iters = n_post_smooth;
+    level_info_objs[i]->coarse_tol = coarse_tol;
+    level_info_objs[i]->coarse_iters = coarse_max_iter;
+    level_info_objs[i]->coarse_restart_freq = coarse_restart; 
+    // FILL IN VALUES
+    stateful_mg_object->set_level_info(i, level_info_objs[i]);
+  }
+
+  // Prepare storage and a guess right hand side.
+
+  // Create a right hand side, fill with gaussian random numbers.
+  //complex<double>* b = allocate_vector<complex<double>>(lats[0]->get_size_cv());
+  complex<double>* b = mg_object->check_out(0);
+  gaussian(b, lats[0]->get_size_cv(), generator);
+  double bnorm = sqrt(norm2sq(b, lats[0]->get_size_cv()));
+
+  // Create a place to accumulate a solution. Assume a zero initial guess.
+  complex<double>* x = mg_object->check_out(0);
+  zero_vector(x, lats[0]->get_size_cv());
+
+  // Create a place to compute Ax. Since we have a zero initial guess, this
+  // starts as zero.
+  complex<double>* Ax = mg_object->check_out(0);
+  zero_vector(Ax, lats[0]->get_size_cv());
+
+  ///////////////////
+  // Non-MG solve! //
+  ///////////////////
+  /*invif = minv_vector_gcr_restart(x, b, lats[0]->get_size_cv(),
+              max_iter, tol, restart_freq,
+              apply_stencil_2D_M, (void*)mg_object->get_stencil(0));
+
+  cout << "Simple GCR solve " << (invif.success ? "converged" : "failed to converge")
+          << " in " << invif.iter << " iterations with alleged tolerance "
+          << sqrt(invif.resSq)/bnorm << ".\n";
+  zero_vector(Ax, lats[0]->get_size_cv());
+  mg_object->apply_stencil(Ax, x, 0);
+  cout << "Check tolerance " << sqrt(diffnorm2sq(b, Ax, lats[0]->get_size_cv()))/bnorm << "\n";
+  */
+
+  ////////////////////
+  // K-cycle solve! //
+  ////////////////////
+
+  // Reset values.
+  zero_vector(x, lats[0]->get_size_cv());
+  zero_vector(Ax, lats[0]->get_size_cv());
+
+  // Run a VPGCR solve!
+  invif = minv_vector_gcr_var_precond_restart(x, b, lats[0]->get_size_cv(),
+              max_iter, tol, restart_freq,
+              apply_stencil_2D_M, (void*)mg_object->get_stencil(0),
+              StatefulMultigridMG::mg_preconditioner, (void*)stateful_mg_object, &verb); 
+
+  cout << "Multigrid " << (invif.success ? "converged" : "failed to converge")
+          << " in " << invif.iter << " iterations with alleged tolerance "
+          << sqrt(invif.resSq)/bnorm << ".\n";
+
+  // Check solution.
+  zero_vector(Ax, lats[0]->get_size_cv());
+  mg_object->apply_stencil(Ax, x, 0);
+  cout << "Check tolerance " << sqrt(diffnorm2sq(b, Ax, lats[0]->get_size_cv()))/bnorm << "\n";
+
+  // Check vectors back in.
+  mg_object->check_in(Ax, 0);
+  mg_object->check_in(x, 0);
+  mg_object->check_in(b, 0);
+
+  ///////////////
+  // Clean up. //
+  ///////////////
+
+  deallocate_vector(&gauge_field);
+
+  // Delete level info objects.
+  for (i = 0; i < n_refine; i++)
+  {
+    delete level_info_objs[i];
+  }
+  delete[] level_info_objs;
+
+  // Delete StatefulMultigridMG.
+  delete stateful_mg_object;
+
+  // Delete MultigridMG.
+  delete mg_object;
+
+  // Delete transfer objects.
+  for (i = 0; i < n_refine; i++)
+  {
+    delete transfer_objs[i];
+  }
+  delete[] transfer_objs;
+
+  // Delete stencil.
+  delete wilson_op;
+
+  // Delete lattices.
+  for (i = 0; i <= n_refine; i++)
+  {
+    delete lats[i];
+  }
+  delete[] lats; 
+
+  return 0;
+}
+
