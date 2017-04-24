@@ -98,7 +98,6 @@ public:
   // Copy the down projection into a new vector, perform the up in place.
   virtual void chiral_projection_both(complex<double>* orig_to_up, complex<double>* down)
   {
-    zero_vector_blas(down+1, 2, lat->get_size_cv()/2);
     zero_vector_blas(down, 2, lat->get_size_cv()/2);
     copy_vector_blas(down+1, orig_to_up+1, 2, lat->get_size_cv()/2);
     zero_vector_blas(orig_to_up+1, 2, lat->get_size_cv()/2);

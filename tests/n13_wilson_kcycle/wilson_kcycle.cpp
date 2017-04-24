@@ -57,7 +57,7 @@ int main(int argc, char** argv)
   }
   else
   {
-    mass = -0.07;
+    mass = -0.09;
   }
 
   // Blocking size.
@@ -171,8 +171,8 @@ int main(int argc, char** argv)
       for (j = 0; j < coarse_dof/2; j++)
       {
         // Will become up chiral projection
-        null_vectors[2*j] = allocate_vector<complex<double> >(lats[i-1]->get_size_cv());
-        zero_vector(null_vectors[2*j], lats[i-1]->get_size_cv());
+        null_vectors[j] = allocate_vector<complex<double> >(lats[i-1]->get_size_cv());
+        zero_vector(null_vectors[j], lats[i-1]->get_size_cv());
 
         // Check out vector.
         complex<double>* rand_guess = mg_object->get_storage(i-1)->check_out();
@@ -182,7 +182,7 @@ int main(int argc, char** argv)
 
         // Make orthogonal to previous vectors.
         for (k = 0; k < j; k++)
-          orthogonal(rand_guess, null_vectors[2*k], lats[i-1]->get_size_cv());
+          orthogonal(rand_guess, null_vectors[k], lats[i-1]->get_size_cv());
 
         // Check out vector for residual equation.
         complex<double>* Arand_guess = mg_object->get_storage(i-1)->check_out();
@@ -193,10 +193,10 @@ int main(int argc, char** argv)
         cax(-1.0, Arand_guess, lats[i-1]->get_size_cv());
 
         // Solve residual equation.
-        minv_vector_bicgstab_l(null_vectors[2*j], Arand_guess, lats[i-1]->get_size_cv(), 500, 5e-5, 6, apply_stencil_2D_M, (void*)mg_object->get_stencil(i-1), &verb);
+        minv_vector_bicgstab_l(null_vectors[j], Arand_guess, lats[i-1]->get_size_cv(), 500, 5e-5, 6, apply_stencil_2D_M, (void*)mg_object->get_stencil(i-1), &verb);
 
         // Undo residual equation.
-        cxpy(rand_guess, null_vectors[2*j], lats[i-1]->get_size_cv());
+        cxpy(rand_guess, null_vectors[j], lats[i-1]->get_size_cv());
 
         // Check in.
         mg_object->get_storage(i-1)->check_in(rand_guess);
@@ -204,27 +204,22 @@ int main(int argc, char** argv)
 
         // Orthogonalize against previous vectors.
         for (k = 0; k < j; k++)
-          orthogonal(null_vectors[2*j], null_vectors[2*k], lats[i-1]->get_size_cv());
+          orthogonal(null_vectors[j], null_vectors[k], lats[i-1]->get_size_cv());
       }
 
-      // Perform chiral projection. Currently hard coded.
+      // Perform chiral projection.
       for (j = 0; j < coarse_dof/2; j++)
       {
         // Get new vector.
-        null_vectors[2*j+1] = allocate_vector<complex<double> >(lats[i-1]->get_size_cv());
+        null_vectors[j+lats[i]->get_nc()/2] = allocate_vector<complex<double> >(lats[i-1]->get_size_cv());
 
-        // Zero new vector.
-        zero_vector(null_vectors[2*j+1], lats[i-1]->get_size_cv());
-
-        // Copy lower chirality components into new vector.
-        copy_vector_blas(null_vectors[2*j+1]+1, null_vectors[2*j]+1, 2, lats[i-1]->get_size_cv()/2);
-
-        // Zero out lower chirality components.
-        zero_vector_blas(null_vectors[2*j]+1, 2, lats[i-1]->get_size_cv()/2);
+        // Perform chiral projection, putting the "down" projection into the second
+        // vector and keeping the "up" projection in the first vector.
+        mg_object->get_stencil(i-1)->chiral_projection_both(null_vectors[j], null_vectors[j+lats[i]->get_nc()/2]);
 
         // Normalize.
-        normalize(null_vectors[2*j], lats[i-1]->get_size_cv());
-        normalize(null_vectors[2*j+1], lats[i-1]->get_size_cv());
+        normalize(null_vectors[j], lats[i-1]->get_size_cv());
+        normalize(null_vectors[j+lats[i]->get_nc()/2], lats[i-1]->get_size_cv());
       }
     }
 
