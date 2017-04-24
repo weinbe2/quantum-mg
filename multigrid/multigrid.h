@@ -2,8 +2,6 @@
 // Header file for a multigrid object, which contains everything (?)
 // needed for a multigrid preconditioner.
 
-// NOT YET COMPLETED, WILL NOT COMPILE
-
 // MG requires:
 // * Knowledge of the number of levels.
 // * Knowledge of each lattice (stored as a std::vector of Lattice2D*)
