@@ -404,7 +404,167 @@ double get_topo_u1(complex<double>* gauge_field, Lattice2D* lat)
 
 }
 
+// Perform a non-compact heatbath phase update.
+// sqrt{PI/beta} exp( -beta * [(theta + 1/2(staple1+ staple2))^2 + const])
+void heatbath_noncompact_update(complex<double>* gauge_field, Lattice2D* lat, double beta, int n_update, std::mt19937 &generator)
+{
+  if (lat->get_nc() != 1)
+  {
+    cout << "[QMG-ERROR]: U1 gauge functions require Nc = 1 lattice.\n";
+    return;
+  }
+
+  // Calculate the width for the heatbath now.
+  double width = sqrt(0.5/beta);
+  std::normal_distribution<> dist(0.0, width);
+
+  int size_gauge = lat->get_size_gauge();
+  const int xlen = lat->get_dim_mu(0);
+  const int ylen = lat->get_dim_mu(1);
+
+  /*
+  complex<double>* staple = allocate_vector<complex<double>>(size_cm);
+  complex<double>* staple_accum = allocate_vector<complex<double>>(size_cm);
+  complex<double>* cm_shift = allocate_vector<complex<double>>(size_cm);
+  complex<double>* cm_shift2 = allocate_vector<complex<double>>(size_cm);
+  */
+  // In-place take the phase of gauge_field.
+  arg_vector(gauge_field, size_gauge);
+
+  // Pointer swap for readability
+  complex<double>* phase_tmp = gauge_field;
+
+  // Should be just a double, but it's all the same.
+  complex<double> staple; 
+  
+  for (int i = 0; i < n_update; i++)
+  {
+    // Unfortunately, we need to hard code loop over sites.
+    // This algorithm can't be parallelized as is...
+    // We would need subsets. Or to just wait for HMC. 
+
+    // Update x.
+    for (int x = 0; x < xlen; x++)
+    {
+      for (int y = 0; y < ylen; y++)
+      {
+        staple = phase_tmp[lat->gauge_coord_to_index((x+1)%xlen, y, 0, 0, 1)];
+        staple -= phase_tmp[lat->gauge_coord_to_index(x, (y+1)%ylen, 0, 0, 0)];
+        staple -= phase_tmp[lat->gauge_coord_to_index(x, y, 0, 0, 1)];
+        staple -= phase_tmp[lat->gauge_coord_to_index((x+1)%xlen, (y-1+ylen)%ylen, 0, 0, 1)];
+        staple -= phase_tmp[lat->gauge_coord_to_index(x, (y-1+ylen)%ylen, 0, 0, 0)];
+        staple += phase_tmp[lat->gauge_coord_to_index(x, (y-1+ylen)%ylen, 0, 0, 1)];
+        phase_tmp[lat->gauge_coord_to_index(x, y, 0, 0, 0)] = dist(generator) - 0.5*staple;
+      }
+    }
+
+    // Update y.
+    for (int x = 0; x < xlen; x++)
+    {
+      for (int y = 0; y < ylen; y++)
+      {
+        staple = phase_tmp[lat->gauge_coord_to_index(x, (y+1)%ylen, 0, 0, 0)];
+        staple -= phase_tmp[lat->gauge_coord_to_index((x+1)%xlen, y, 0, 0, 1)];
+        staple -= phase_tmp[lat->gauge_coord_to_index(x, y, 0, 0, 0)];
+        staple -= phase_tmp[lat->gauge_coord_to_index((x-1+xlen)%xlen, (y+1)%ylen, 0, 0, 0)];
+        staple -= phase_tmp[lat->gauge_coord_to_index((x-1+xlen)%xlen, y, 0, 0, 1)];
+        staple += phase_tmp[lat->gauge_coord_to_index((x-1+xlen)%xlen, y, 0, 0, 0)];
+        phase_tmp[lat->gauge_coord_to_index(x, y, 0, 0, 1)] = dist(generator) - 0.5*staple;
+      }
+    }
+
+    // Update y.
+
+    /*
+
+    // x first.
+
+    // ----
+    // |  |
+    
+    // +A_y(x)
+    copy_vector(staple, phase_tmp + size_cm, size_cm);
+    // +A_x(x+yhat)
+    cshift(cm_shift, phase_tmp, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_EVENODD, 1, lat);
+    caxpy(1.0, cm_shift, staple, size_cm);
+    // -A_y(x+xhat)
+    cshift(cm_shift, phase_tmp + size_cm, QMG_CSHIFT_FROM_XP1, QMG_EO_FROM_EVENODD, 1, lat);
+    caxpy(-1.0, cm_shift, staple, size_cm);
+    copy_vector(staple_accum, staple, size_cm);
+
+    // |  |
+    // ----
+
+    // -A_y(x-yhat)
+    cshift(cm_shift2, phase_tmp + size_cm, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_EVENODD, 1, lat);
+    caxy(-1.0, cm_shift2, staple, size_cm); // for +x-y.
+
+    // +A_x(x-yhat)
+    cshift(cm_shift, phase_tmp, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_EVENODD, 1, lat);
+    caxpy(1.0, cm_shift, staple, size_cm);
+
+    // A_y(x+xhat-yhat). Could really use the QMG_CSHIFT_FROM_XP1YM1 here.
+    cshift(cm_shift, cm_shift2, QMG_CSHIFT_FROM_XP1, QMG_EO_FROM_EVENODD, 1, lat);
+    caxpy(1.0, cm_shift, staple, size_cm);
+    caxpy(1.0, staple, staple_accum, size_cm);
+
+    // Do heatbath update on x links.
+    gaussian_real(phase_tmp, size_cm, generator, width);
+    caxpy(0.5, staple_accum, phase_tmp, size_cm);
 
 
+    // y second.
+
+    // ----
+    //    |
+    // ----
+    
+    // +A_x(x)
+    copy_vector(staple, phase_tmp, size_cm);
+    // +A_y(x+xhat)
+    cshift(cm_shift, phase_tmp + size_cm, QMG_CSHIFT_FROM_XP1, QMG_EO_FROM_EVENODD, 1, lat);
+    caxpy(1.0, cm_shift, staple, size_cm);
+    // -A_x(x+yhat)
+    cshift(cm_shift, phase_tmp, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_EVENODD, 1, lat);
+    caxpy(-1.0, cm_shift, staple, size_cm);
+    copy_vector(staple_accum, staple, size_cm);
+
+    // ----
+    // |
+    // ----
+
+    // -A_x(x-xhat)
+    cshift(cm_shift2, phase_tmp, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_EVENODD, 1, lat);
+    caxy(-1.0, cm_shift2, staple, size_cm); // for -x+y.
+
+    // +A_y(x-xhat)
+    cshift(cm_shift, phase_tmp + size_cm, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_EVENODD, 1, lat);
+    caxpy(1.0, cm_shift, staple, size_cm);
+
+    // A_x(x+yhat-xhat). Could really use the QMG_CSHIFT_FROM_XM1YP1 here.
+    cshift(cm_shift, cm_shift2, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_EVENODD, 1, lat);
+    caxpy(1.0, cm_shift, staple, size_cm);
+    caxpy(1.0, staple, staple_accum, size_cm);
+
+    // Do heatbath update on y links.
+    gaussian_real(phase_tmp + size_cm, size_cm, generator, width);
+    caxpy(0.5, staple_accum, phase_tmp + size_cm, size_cm);
+    */
+    // Normalize phases.
+    polar(phase_tmp, size_gauge);
+    arg_vector(phase_tmp, size_gauge);
+  }
+
+  // Exponentiate.
+  polar(phase_tmp, size_gauge);
+
+  // Since phase_tmp identifies with gauge_field, we're done. 
+  /*
+  deallocate_vector(&staple);
+  deallocate_vector(&staple_accum);
+  deallocate_vector(&cm_shift);
+  deallocate_vector(&cm_shift2);
+  */
+}
 	
 #endif // U1_UTILS

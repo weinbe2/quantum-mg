@@ -1,0 +1,74 @@
+// Copyright (c) Evan Weinberg 2017
+// Generate non-compact quenched U(1) gauge fields
+// via heatbath. Based heavily on code by Richard Brower.
+
+#include <iostream>
+#include <iomanip>
+#include <fstream>
+#include <cmath>
+#include <random>
+
+using namespace std;
+
+#include "blas/generic_vector.h"
+#include "lattice/lattice.h"
+#include "u1/u1_utils.h"
+
+int main(int argc, char** argv)
+{
+  cout << setiosflags(ios::fixed) << setprecision(6);
+
+  // Iterator
+  int i;
+
+  // Random number generator
+  std::mt19937 generator (1337u);
+
+  // Some basic fields.
+  const int x_len = 32;
+  const int y_len = 32;
+  double beta = 3.0; 
+
+  // How many updates to do between measurements
+  int n_update = 100;
+  int n_therm = 1000;
+  int n_max = 10000;
+
+  // Create a lattice object. 
+  Lattice2D* lat = new Lattice2D(x_len, y_len, 1);
+
+  // Allocate a gauge fields
+  complex<double>* field1 = allocate_vector<complex<double>>(lat->get_size_gauge());
+
+  // Create a unit field!
+  unit_gauge_u1(field1, lat);
+
+  // Create a place to accumulate the plaquette.
+  double plaq = 0.0;
+  int count = 0;
+
+  // Do an initial measurement of the plaquette and topology.
+  i = 0;
+  cout << i << " " << get_plaquette_u1(field1, lat) << " " << get_topo_u1(field1, lat) << "\n";
+
+  // Perform the heatbath update.
+  for (i = n_update; i < n_max; i+=n_update)
+  {
+    heatbath_noncompact_update(field1, lat, beta, n_update, generator);
+    double plaq_tmp = std::real(get_plaquette_u1(field1, lat));
+    cout << i << " " << plaq_tmp << " " << get_topo_u1(field1, lat) << "\n";
+    if (i > n_therm)
+    {
+      plaq += plaq_tmp;
+      count++;
+    }
+  }
+
+  cout << "The mean plaquette is " << plaq/count << "\n";
+
+  // Clean up.
+  deallocate_vector(&field1);
+
+  delete lat;
+}
+
