@@ -77,6 +77,7 @@ int main(int argc, char** argv)
   cout << "The mean plaquette is " << plaq/count << " +/- " << sqrt((plaq_sq/count - plaq*plaq/(count*count))/(count)) << "\n";
 
   // Clean up.
+  deallocate_vector(&phases);
   deallocate_vector(&field1);
 
   delete lat;
