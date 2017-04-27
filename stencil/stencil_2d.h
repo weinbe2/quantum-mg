@@ -64,6 +64,9 @@ protected:
   complex<double>* priv_cmatrix;
   complex<double>* priv_cvector;
 
+  // Exposed extra cvector.
+  complex<double>* extra_cvector;
+
 public:
   // Associated lattice!
   Lattice2D* lat; 
@@ -149,6 +152,9 @@ public:
     // Allocate private memory.
     priv_cmatrix = allocate_vector<complex<double>>(lat->get_size_cm());
     priv_cvector = allocate_vector<complex<double>>(lat->get_size_cv());
+
+    // Allocate extra memory.
+    extra_cvector = allocate_vector<complex<double>>(lat->get_size_cv());
     
     // Set all dagger variables to zero.
     built_dagger = false;
@@ -170,6 +176,9 @@ public:
     deallocate_vector(&priv_cmatrix);
     deallocate_vector(&priv_cvector);
 
+    // Deallocate extra memory.
+    deallocate_vector(&extra_cvector);
+
     if (dagger_clover != 0) { deallocate_vector(&dagger_clover); }
     if (dagger_hopping != 0) { deallocate_vector(&dagger_hopping); }
     if (dagger_twolink != 0) { deallocate_vector(&dagger_twolink); }
@@ -187,11 +196,21 @@ public:
     if (hopping != 0) { zero_vector(hopping, lat->get_size_hopping()); }
     if (twolink != 0) { zero_vector(twolink, lat->get_size_hopping()); }
     if (corner != 0) { zero_vector(corner, lat->get_size_corner()); }
+
+    if (built_dagger)
+    {
+      if (dagger_clover != 0) { zero_vector(dagger_clover, lat->get_size_cm()); }
+      if (dagger_hopping != 0) { zero_vector(dagger_hopping, lat->get_size_hopping()); }
+      if (dagger_twolink != 0) { zero_vector(dagger_twolink, lat->get_size_hopping()); }
+      if (dagger_corner != 0) { zero_vector(dagger_corner, lat->get_size_corner()); }
+      built_dagger = false; 
+    }
     
     generated = false; 
   }
   
   // Prune pieces of the stencil. This deletes pieces.
+  // Need to figure out what that means for dagger stencils...
   void prune_stencils(int pieces)
   {
     if (pieces & QMG_PIECE_CLOVER)
@@ -245,6 +264,13 @@ public:
     if (clover == 0 && hopping == 0 && twolink == 0 && corner == 0)
       generated = false;
   }
+
+  // Expose internal memory.
+  complex<double>* expose_internal_cvector()
+  {
+    return extra_cvector;
+  }
+
   
   // Print the full stencil at one site.
   void print_stencil_site(int x, int y, string prefix = "")
@@ -749,9 +775,275 @@ public:
       return;
     }
 
+    const int nc = lat->get_nc();
+    const int nc2 = nc*nc;
+    const int vol = lat->get_volume();
+    const int size_cm = lat->get_size_cm();
+
     // As with anything else, this only supports one-link stencils for now.
-    // We should do fused copy-
+    if (clover != 0)
+    {
+      dagger_clover = allocate_vector<complex<double>>(lat->get_size_cm());
+      cMATcopy_conjtrans_square(clover, dagger_clover, vol, nc);
+    }
+      
+    if (hopping != 0)
+    {
+      dagger_hopping = allocate_vector<complex<double>>(lat->get_size_hopping());
+
+      // +x
+      // The right link is the dagger of the left link of the site from the right.
+      cshift(priv_cmatrix, hopping + 2*size_cm, QMG_CSHIFT_FROM_XP1, QMG_EO_FROM_EVENODD, nc2, lat);
+      cMATcopy_conjtrans_square(priv_cmatrix, dagger_hopping, vol, nc);
+
+      // +y
+      // The up link is the dagger of the down link of the site from above.
+      cshift(priv_cmatrix, hopping + 3*size_cm, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_EVENODD, nc2, lat);
+      cMATcopy_conjtrans_square(priv_cmatrix, dagger_hopping + size_cm, vol, nc);
+
+      // -x
+      // The left link is the dagger of the right link of the site from the left.
+      cshift(priv_cmatrix, hopping, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_EVENODD, nc2, lat);
+      cMATcopy_conjtrans_square(priv_cmatrix, dagger_hopping + 2*size_cm, vol, nc);
+
+      // -y
+      // The down link is the dagger of the up link of the site below. 
+      cshift(priv_cmatrix, hopping + size_cm, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_EVENODD, nc2, lat);
+      cMATcopy_conjtrans_square(priv_cmatrix, dagger_hopping + 3*size_cm, vol, nc);
+    }
+    
+    if (twolink != 0)
+    {
+      //dagger_twolink = allocate_vector<complex<double>>(lat->get_size_hopping());
+      cout << "[QMG-WARNING]: two link stencil not yet supported.\n";
+    }
+      
+    if (corner != 0)
+    {
+      //dagger_corner = allocate_vector<complex<double>>(lat->get_size_corner());
+      cout << "[QMG-WARNING]: corner stencil not yet supported.\n";
+    }
+
+    built_dagger = true; 
+
   }
+
+  // Gettin' lazy over here!
+
+  void print_stencil_dagger_site(int x, int y, string prefix = "")
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call print_stencil_dagger_site, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    // Pointer swaaaap.
+    std::swap(clover, dagger_clover);
+    std::swap(hopping, dagger_hopping);
+    std::swap(twolink, dagger_twolink);
+    std::swap(corner, dagger_corner);
+    shift = std::conj(shift);
+    eo_shift = std::conj(eo_shift);
+    dof_shift = std::conj(dof_shift);
+    print_stencil_site(x, y, prefix);
+    std::swap(clover, dagger_clover);
+    std::swap(hopping, dagger_hopping);
+    std::swap(twolink, dagger_twolink);
+    std::swap(corner, dagger_corner);
+    shift = std::conj(shift);
+    eo_shift = std::conj(eo_shift);
+    dof_shift = std::conj(dof_shift);
+  }
+
+  
+  void apply_M_dagger_clover(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger_clover, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (dagger_clover == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_dagger_clover, but the dagger clover does not exist.\n";
+      return;
+    }
+
+    // Pointer swaaaap.
+    std::swap(clover, dagger_clover);
+    apply_M_clover(lhs, rhs);
+    std::swap(clover, dagger_clover);
+  }
+
+  void apply_M_dagger_eo(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger_eo, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (dagger_clover == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_dagger_eo, but the dagger hopping term does not exist.\n";
+      return;
+    }
+
+    // Pointer swaaaap.
+    std::swap(hopping, dagger_hopping);
+    apply_M_eo(lhs, rhs);
+    std::swap(hopping, dagger_hopping);
+  }
+
+  void apply_M_dagger_eo(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger_eo, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (dagger_clover == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_dagger_eo, but the dagger hopping term does not exist.\n";
+      return;
+    }
+
+    // Pointer swaaaap.
+    std::swap(hopping, dagger_hopping);
+    apply_M_eo(lhs, rhs, dir);
+    std::swap(hopping, dagger_hopping);
+  }
+  
+  void apply_M_dagger_oe(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger_oe, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (dagger_clover == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_dagger_oe, but the dagger hopping term does not exist.\n";
+      return;
+    }
+
+    // Pointer swaaaap.
+    std::swap(hopping, dagger_hopping);
+    apply_M_oe(lhs, rhs);
+    std::swap(hopping, dagger_hopping);
+  }
+
+  void apply_M_dagger_oe(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger_oe, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (dagger_clover == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_dagger_oe, but the dagger hopping term does not exist.\n";
+      return;
+    }
+
+    // Pointer swaaaap.
+    std::swap(hopping, dagger_hopping);
+    apply_M_oe(lhs, rhs, dir);
+    std::swap(hopping, dagger_hopping);
+  }
+
+  void apply_M_dagger_hopping(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger_hopping, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (dagger_clover == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_dagger_hopping, but the dagger hopping term does not exist.\n";
+      return;
+    }
+
+    // Pointer swaaaap.
+    std::swap(hopping, dagger_hopping);
+    apply_M_hopping(lhs, rhs);
+    std::swap(hopping, dagger_hopping);
+  }
+
+  void apply_M_dagger_hopping(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger_hopping, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (dagger_clover == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_dagger_hopping, but the dagger hopping term does not exist.\n";
+      return;
+    }
+
+    // Pointer swaaaap.
+    std::swap(hopping, dagger_hopping);
+    apply_M_hopping(lhs, rhs);
+    std::swap(hopping, dagger_hopping);
+  }
+  
+  // void apply_M_dagger_twolink(complex<double>* lhs, complex<double>* rhs);
+  // void apply_M_dagger_corner(complex<double>* lhs, complex<double>* rhs);
+
+  void apply_M_dagger_shift(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger_shift, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    shift = std::conj(shift);
+    eo_shift = std::conj(eo_shift);
+    dof_shift = std::conj(dof_shift);
+    apply_M_shift(lhs, rhs);
+    shift = std::conj(shift);
+    eo_shift = std::conj(eo_shift);
+    dof_shift = std::conj(dof_shift);
+  }
+
+  void apply_M_dagger(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    // Pointer swaaaap.
+    std::swap(clover, dagger_clover);
+    std::swap(hopping, dagger_hopping);
+    std::swap(twolink, dagger_twolink);
+    std::swap(corner, dagger_corner);
+    shift = std::conj(shift);
+    eo_shift = std::conj(eo_shift);
+    dof_shift = std::conj(dof_shift);
+    apply_M(lhs, rhs);
+    std::swap(clover, dagger_clover);
+    std::swap(hopping, dagger_hopping);
+    std::swap(twolink, dagger_twolink);
+    std::swap(corner, dagger_corner);
+    shift = std::conj(shift);
+    eo_shift = std::conj(eo_shift);
+    dof_shift = std::conj(dof_shift);
+  }
+
+
 
 };
 
@@ -761,6 +1053,46 @@ void apply_stencil_2D_M(complex<double>* lhs, complex<double>* rhs, void* extra_
   Stencil2D* stenc = (Stencil2D*)extra_data;
   zero_vector(lhs, stenc->lat->get_size_cv());
   stenc->apply_M(lhs, rhs); // lhs = M rhs
+}
+
+void apply_stencil_2D_M_dagger(complex<double>* lhs, complex<double>* rhs, void* extra_data)
+{
+  Stencil2D* stenc = (Stencil2D*)extra_data;
+  zero_vector(lhs, stenc->lat->get_size_cv());
+  if (!stenc->built_dagger)
+  {
+    std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_dagger, but the dagger stencil has not been built.\n";
+    return;
+  }
+  stenc->apply_M_dagger(lhs, rhs); // lhs = M rhs
+}
+
+void apply_stencil_2D_M_dagger_M(complex<double>* lhs, complex<double>* rhs, void* extra_data)
+{
+  Stencil2D* stenc = (Stencil2D*)extra_data;
+  if (!stenc->built_dagger)
+  {
+    std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_dagger_M, but the dagger stencil has not been built.\n";
+    return;
+  }
+  zero_vector(stenc->expose_internal_cvector(), stenc->lat->get_size_cv());
+  stenc->apply_M(stenc->expose_internal_cvector(), rhs); // lhs = M rhs
+  zero_vector(lhs, stenc->lat->get_size_cv());
+  stenc->apply_M_dagger(lhs, stenc->expose_internal_cvector()); // lhs = M rhs
+}
+
+void apply_stencil_2D_M_M_dagger(complex<double>* lhs, complex<double>* rhs, void* extra_data)
+{
+  Stencil2D* stenc = (Stencil2D*)extra_data;
+  if (!stenc->built_dagger)
+  {
+    std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_M_dagger, but the dagger stencil has not been built.\n";
+    return;
+  }
+  zero_vector(stenc->expose_internal_cvector(), stenc->lat->get_size_cv());
+  stenc->apply_M_dagger(stenc->expose_internal_cvector(), rhs); // lhs = M rhs
+  zero_vector(lhs, stenc->lat->get_size_cv());
+  stenc->apply_M(lhs, stenc->expose_internal_cvector()); // lhs = M rhs
 }
 
 #endif // QMG_STENCIL_2D
