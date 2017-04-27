@@ -94,6 +94,15 @@ public:
   // Top/bottom half shift (minus sign on bottom half of color dof, think mass term on coarse g5_staggered.
   // i.e., top half of dof gets a lhs[i] += dof_shift*rhs[i], bottom half gets a rhs[i] -= dof_shift*rhs[i]
   complex<double> dof_shift;
+
+  // Variables related to the dagger stencil. These only get filled
+  // on request, by calling "build_dagger_stencil". They have the same
+  // size as the other variables defined above.
+  bool built_dagger;
+  complex<double>* dagger_clover;
+  complex<double>* dagger_hopping;
+  complex<double>* dagger_twolink;
+  complex<double>* dagger_corner;
     
   // Base constructor
   Stencil2D(Lattice2D* in_lat, int pieces, complex<double> in_shift = 0.0, complex<double> in_eo_shift = 0.0, complex<double> in_dof_shift = 0.0)
@@ -141,6 +150,13 @@ public:
     priv_cmatrix = allocate_vector<complex<double>>(lat->get_size_cm());
     priv_cvector = allocate_vector<complex<double>>(lat->get_size_cv());
     
+    // Set all dagger variables to zero.
+    built_dagger = false;
+    dagger_clover = 0;
+    dagger_hopping = 0;
+    dagger_twolink = 0;
+    dagger_corner = 0;
+
   }
   
   virtual ~Stencil2D()
@@ -153,6 +169,12 @@ public:
     // Deallocate private memory.
     deallocate_vector(&priv_cmatrix);
     deallocate_vector(&priv_cvector);
+
+    if (dagger_clover != 0) { deallocate_vector(&dagger_clover); }
+    if (dagger_hopping != 0) { deallocate_vector(&dagger_hopping); }
+    if (dagger_twolink != 0) { deallocate_vector(&dagger_twolink); }
+    if (dagger_corner != 0) { deallocate_vector(&dagger_corner); }
+    built_dagger = false; 
     
     generated = false; 
 
@@ -712,6 +734,24 @@ public:
 
   // Copy the down projection into a new vector, perform the up in place.
   virtual void chiral_projection_both(complex<double>* orig_to_up, complex<double>* down) = 0;
+
+
+public:
+  //////////////////////////////
+  // DAGGER STENCIL FUNCTIONS //
+  //////////////////////////////
+
+  void build_dagger_stencil()
+  {
+    if (built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call build_dagger_stencil, but it's already been called once.\n";
+      return;
+    }
+
+    // As with anything else, this only supports one-link stencils for now.
+    // We should do fused copy-
+  }
 
 };
 

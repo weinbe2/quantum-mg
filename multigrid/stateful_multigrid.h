@@ -4,6 +4,10 @@
 // It's also aware of how to perform smearing, preconditioning,
 // etc on each level.
 
+// To do: Add a counter for the number of op applications at each level.
+// This way we can track the number of operator applications over 
+// the entire solve. 
+
 // QLINALG
 #include "blas/generic_vector.h"
 #include "inverters/generic_gcr.h"
@@ -190,7 +194,7 @@ public:
     // State.
     StatefulMultigridMG* stateful_mg_object = (StatefulMultigridMG*)extra_data;
     int level = stateful_mg_object->get_multigrid_level();
-    cout << "Entered level " << level << "\n" << flush;
+    //cout << "Entered level " << level << "\n" << flush;
 
     // MultigridMG.
     MultigridMG* mg_object = stateful_mg_object->get_multigrid_object();
@@ -213,13 +217,22 @@ public:
     // Number of levels.
     int total_num_levels = mg_object->get_num_levels();
 
-    // Verbosity and inversion info.
+    // Verbosity and inversion info. Currently this is hacky.
     inversion_info invif;
-    inversion_verbose_struct verb2;
-    verb2.verbosity = VERB_DETAIL;
-    verb2.verb_prefix = "Level " + to_string(level+1) + ": ";
-    verb2.precond_verbosity = VERB_DETAIL;
-    verb2.precond_verb_prefix = "Prec ";
+    inversion_verbose_struct verb2(VERB_SUMMARY, std::string(" "));
+    if (verb->verbosity == VERB_NONE)
+    {
+      verb2.verbosity = VERB_NONE;
+      verb2.precond_verbosity = VERB_NONE;
+    }
+    else
+    {
+      verb2.precond_verbosity = VERB_SUMMARY;
+    }
+    verb2.verb_prefix = "  ";
+    for (int i = 1; i < level+1; i++)
+      verb2.verb_prefix += "  ";
+    verb2.verb_prefix += "[QMG-MG-SOLVE-INFO]: Level " + to_string(level+1) + " ";
 
     // Get smoothing, coarse solve info structure for current level.
     LevelInfoMG* level_info = stateful_mg_object->get_level_info();
@@ -255,7 +268,6 @@ public:
     if (level == total_num_levels-2) // if we're already on the coarsest level
     {
       // Do coarsest solve.
-      verb2.verbosity = VERB_NONE;
       if (coarse_restart == -1)
       {
         invif = minv_vector_gcr(e_coarse, r_coarse, coarse_size,
@@ -292,7 +304,7 @@ public:
       //mg_preconditioner(e_coarse, r_coarse, coarse_size, (void*)stateful_mg_object);
       stateful_mg_object->go_finer();
     }
-    cout << "Level " << level << " coarse preconditioner took " << invif.iter << " iterations.\n" << flush;
+    //cout << "Level " << level << " coarse preconditioner took " << invif.iter << " iterations.\n" << flush;
     coarse_storage->check_in(r_coarse);
     complex<double>* z2 = fine_storage->check_out();
     zero_vector(z2, fine_size);
@@ -318,7 +330,7 @@ public:
     fine_storage->check_in(r2);
     fine_storage->check_in(z3);
 
-    cout << "Exited level " << level << "\n" << flush;
+    //cout << "Exited level " << level << "\n" << flush;
   }
 
 };

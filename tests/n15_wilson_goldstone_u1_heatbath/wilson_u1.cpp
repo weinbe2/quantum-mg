@@ -34,19 +34,20 @@ int main(int argc, char** argv)
   std::mt19937 generator (1337u);
 
   // Some basic fields.
-  const int x_len = 32;
-  const int y_len = 32;
+  const int x_len = 64;
+  const int y_len = 64;
   const int dof = Wilson2D::get_dof();
   double beta = 6.0; 
 
   // Information about the Wilson operator.
-  double mass = 0.01;
+  double mass = -0.07;
 
   // Define inverter parameters, inversion struct.
   inversion_verbose_struct* verb = new inversion_verbose_struct(VERB_SUMMARY, std::string("[QMG-WILSON-INFO]: "));
   int max_iter = 4000;
   double tol = 1e-10;
   int bicgstab_l = 6;
+  inversion_info invif;
 
   // How many updates to do between measurements
   int n_update = 100;
@@ -96,13 +97,14 @@ int main(int argc, char** argv)
   // Create a place to accumulate the would-be pion correlator. 
   double pion[y_len];
   double pion_sq[y_len];
-  double pion_tmp[y_len];
+  double pion_up[y_len];
+  double pion_down[y_len];
   for (j = 0; j < y_len; j++)
     pion[j] = 0.0;
 
   // Do an initial measurement of the plaquette and topology.
   i = 0;
-  cout << "[QMG-GAUGE]: "<< i << " " << get_plaquette_u1(gauge_field, lat) << " " << get_topo_u1(gauge_field, lat) << "\n";
+  cout << "[QMG-GAUGE]: "<< i << " " << get_plaquette_u1(gauge_field, lat_gauge) << " " << get_topo_u1(gauge_field, lat_gauge) << "\n";
 
   // Perform the heatbath update.
   for (i = n_update; i < n_max; i+=n_update)
@@ -111,7 +113,6 @@ int main(int argc, char** argv)
     heatbath_noncompact_update(phases, lat_gauge, beta, n_update, generator);
 
     // Get compact links.
-    cout << "NORM: " << norm2sq(src, cv_size) << "\n";
     polar_vector(phases, gauge_field, lat_gauge->get_size_gauge());
     double plaq_tmp = std::real(get_plaquette_u1(gauge_field, lat_gauge));
     cout << i << " " << plaq_tmp << " " << get_topo_u1(gauge_field, lat_gauge) << "\n";
@@ -120,29 +121,61 @@ int main(int argc, char** argv)
       plaq += plaq_tmp;
       plaq_sq += plaq_tmp*plaq_tmp;
 
-      // Update the Wilson operator, perform a propagator inversion.
+      // Update the Wilson operator.
       wilson->update_links(gauge_field);
       cout << setiosflags(ios::scientific) << setprecision(6);
-      inversion_info invif = minv_vector_bicgstab_l(prop, src, cv_size, max_iter, tol, bicgstab_l, apply_stencil_2D_M, (void*)wilson, verb);
-      cout << setiosflags(ios::fixed) << setprecision(6);
+
+      // We need to perform two inversions: one for each parity component.
+
+      ////////////////
+      // Parity up: //
+      ////////////////
+      src[lat->cv_coord_to_index(0,0,0)] = 1.0;
+      src[lat->cv_coord_to_index(0,0,1)] = 0.0;
+      invif = minv_vector_bicgstab_l(prop, src, cv_size, max_iter, tol, bicgstab_l, apply_stencil_2D_M, (void*)wilson, verb);
 
       // Compute the norm2sq, update into accumulator.
-      norm2sq_cv_timeslice(pion_tmp, prop, lat);
+      norm2sq_cv_timeslice(pion_up, prop, lat);
 
       // Fold the pion.
       for (j = 1; j < y_len/2; j++)
       {
-        double tmp = 0.5*(pion_tmp[j] + pion_tmp[y_len-j]);
-        pion_tmp[j] = pion_tmp[y_len-j] = tmp;
+        double tmp = 0.5*(pion_up[j] + pion_up[y_len-j]);
+        pion_up[j] = pion_up[y_len-j] = tmp;
       }
 
+      //////////////////
+      // Parity down: //
+      //////////////////
+      src[lat->cv_coord_to_index(0,0,0)] = 0.0;
+      src[lat->cv_coord_to_index(0,0,1)] = 1.0;
+      constant_vector(prop, 1.0, cv_size); // For some reason we can't recycle the
+                                           // old solution as an initial guess.
+      invif = minv_vector_bicgstab_l(prop, src, cv_size, max_iter, tol, bicgstab_l, apply_stencil_2D_M, (void*)wilson, verb);
+
+      // Compute the norm2sq, update into accumulator.
+      norm2sq_cv_timeslice(pion_down, prop, lat);
+
+      // Fold the pion.
+      for (j = 1; j < y_len/2; j++)
+      {
+        double tmp = 0.5*(pion_down[j] + pion_down[y_len-j]);
+        pion_down[j] = pion_down[y_len-j] = tmp;
+      }
+
+      // And we're done.
+
+      // Accumulate pions.
       for (j = 0; j < y_len; j++)
       {
-        pion[j] += pion_tmp[j];
-        pion_sq[j] += pion_tmp[j]*pion_tmp[j];
+        pion[j] += pion_up[j] + pion_down[j];
+        pion_sq[j] += (pion_up[j] + pion_down[j])*(pion_up[j] + pion_down[j]);
       }
 
-      // Update the counter. 
+      // Reset the output precision.
+      cout << setiosflags(ios::fixed) << setprecision(6);
+
+      // An update the counter. 
       count++;
 
     }
