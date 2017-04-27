@@ -27,8 +27,8 @@ int main(int argc, char** argv)
   // Iterators and such.
 
   // Basic information.
-  const int x_len = 32;
-  const int y_len = 32;
+  const int x_len = 64;
+  const int y_len = 64;
   const int dof = 2;
 
   // Staggered specific information.
@@ -53,7 +53,7 @@ int main(int argc, char** argv)
   // Prepare the gauge field.
   Lattice2D* lat_gauge = new Lattice2D(x_len, y_len, 1); // hack...
   complex<double>* gauge_field = allocate_vector<complex<double>>(lat->get_size_gauge());
-  read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l32t32b60_heatbath.dat");
+  read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l64t64b60_heatbath.dat");
   //unit_gauge_u1(gauge_field, lat_gauge);
   delete lat_gauge; 
 
@@ -64,29 +64,68 @@ int main(int argc, char** argv)
   int max_iter = 4000;
   double tol = 1e-15;
 
+  //////////////////////////////
+  // Get the entire spectrum. //
+  //////////////////////////////
 
-  // Get the entire spectrum.
-  arpack_dcn* arpack = new arpack_dcn(cv_size, max_iter, tol, apply_stencil_2D_M, (void*)wilson_stencil);
+  arpack_dcn* arpack;
 
-  complex<double>* eigs = new complex<double>[cv_size];
-  complex<double>** evecs = new complex<double>*[cv_size];
-  for (int i = 0; i < cv_size; i++)
+  complex<double>* eigs;
+  complex<double>** evecs;
+
+  if (cv_size <= 2048)
   {
-    evecs[i] = allocate_vector<complex<double> >(cv_size);
+    std::cout << "Computing entire spectrum.\n";
+    arpack = new arpack_dcn(cv_size, max_iter, tol, apply_stencil_2D_M, (void*)wilson_stencil);
+
+    eigs = new complex<double>[cv_size];
+    evecs = new complex<double>*[cv_size];
+    for (int i = 0; i < cv_size; i++)
+    {
+      evecs[i] = allocate_vector<complex<double> >(cv_size);
+    }
+
+    arpack->get_entire_eigensystem(eigs, arpack_dcn::ARPACK_SMALLEST_REAL);
+
+    for (int i = 0; i < cv_size; i++)
+      std::cout << "Eigenvalue " << i << " has value " << eigs[i] << "\n";
+
+    for (int i = 0; i < cv_size; i++)
+    {
+      deallocate_vector(&evecs[i]);
+    }
+    delete[] evecs;
+    delete[] eigs;
+    delete arpack; 
   }
 
-  arpack->get_entire_eigensystem(eigs, arpack_dcn::ARPACK_SMALLEST_REAL);
+  ///////////////////////////////////
+  // Get a subset of the spectrum. //
+  ///////////////////////////////////
 
-  for (int i = 0; i < cv_size; i++)
-    std::cout << "Eigenvalue " << i << " has value " << eigs[i] << "\n";
+  // Prepare an arpack structure for grabbing some small
+  // amount of eigenvalues.
+  int n_eigens = 20;
+  arpack = new arpack_dcn(cv_size, max_iter, tol,
+                apply_stencil_2D_M, (void*)wilson_stencil,
+                n_eigens, 3*n_eigens);
 
-  for (int i = 0; i < cv_size; i++)
+  std::cout << "Computing " << n_eigens << " lowest eigenvalues.\n";
+
+  eigs = new complex<double>[n_eigens];
+
+  if(!arpack->prepare_eigensystem(arpack_dcn::ARPACK_SMALLEST_MAGNITUDE, 20))
   {
-    deallocate_vector(&evecs[i]);
+    cout << "[ERROR]: Znaupd code: " << arpack->get_solve_info().znaupd_code << "\n";
   }
+  arpack->get_eigensystem(eigs, arpack_dcn::ARPACK_SMALLEST_MAGNITUDE);
 
-  delete[] evecs;
-  delete[] eigs;
+  for (int j = 0; j < n_eigens; j++)
+    std::cout << eigs[j] << "\n";
+  std::cout << "\n";
+
+  delete eigs;
+  delete arpack;
 
   // Clean up.
   deallocate_vector(&lhs);

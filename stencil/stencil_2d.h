@@ -265,6 +265,12 @@ public:
       generated = false;
   }
 
+  // Get the lattice.
+  Lattice2D* get_lattice()
+  {
+    return lat;
+  }
+
   // Expose internal memory.
   complex<double>* expose_internal_cvector()
   {
@@ -683,6 +689,7 @@ public:
     }
   }
 
+  // lhs = A rhs
   void apply_M(complex<double>* lhs, complex<double>* rhs)
   {
     if (clover != 0)
