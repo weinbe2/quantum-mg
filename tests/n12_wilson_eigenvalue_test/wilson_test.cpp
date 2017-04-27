@@ -32,7 +32,8 @@ int main(int argc, char** argv)
   const int dof = 2;
 
   // Staggered specific information.
-  const double mass = 0.1;
+  // For 64^2, beta = 6.0, eigenvalues go negative around -0.075.
+  const double mass = -0.07;
 
   // Create a lattice object.
   Lattice2D* lat = new Lattice2D(x_len, y_len, dof);

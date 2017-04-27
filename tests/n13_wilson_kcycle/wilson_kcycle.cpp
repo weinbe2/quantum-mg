@@ -57,7 +57,9 @@ int main(int argc, char** argv)
   }
   else
   {
-    mass = -0.09;
+    // Staggered specific information.
+    // For 64^2, beta = 6.0, eigenvalues go negative around -0.075.
+    mass = -0.07;
   }
 
   // Blocking size.
