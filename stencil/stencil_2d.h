@@ -53,6 +53,17 @@ enum chirality_state
   QMG_CHIRAL_UNKNOWN = 2 // used for coarse operator.
 };
 
+// enum for what type of matrix op to prepare, apply, reconstruct.
+enum stencil_type
+{
+  QMG_MATVEC_ORIGINAL = 0, // apply original op
+  QMG_MATVEC_DAGGER = 1, // apply op dagger
+  QMG_MATVEC_RIGHT_JACOBI = 2, // apply right block jacobi
+  QMG_MATVEC_RIGHT_EO = 3, // apply eo right block jacobi
+  QMG_MATVEC_M_MDAGGER = 4, // apply M M^dagger
+  QMG_MATVEC_MDAGGER_M = 5, // apply M^dagger M
+};
+
 struct Stencil2D
 {
 protected:
@@ -106,6 +117,11 @@ public:
   complex<double>* dagger_hopping;
   complex<double>* dagger_twolink;
   complex<double>* dagger_corner;
+
+  // Variables related to the eo stencil. These only get filled on
+  // request by calling "build_right_jacobi_stencil".
+  // The "clover" is the trivial identity. Could be made more efficient.
+
     
   // Base constructor
   Stencil2D(Lattice2D* in_lat, int pieces, complex<double> in_shift = 0.0, complex<double> in_eo_shift = 0.0, complex<double> in_dof_shift = 0.0)
@@ -655,7 +671,7 @@ public:
         for (int c = 0; c < lat->get_nc()/2; c++)
         {
           lhs[c] += (shift+eo_shift+dof_shift)*rhs[c];
-          lhs[c+lat->get_nc()/2] += (shift+eo_shift-dof_shift)*rhs[c];
+          lhs[c+lat->get_nc()/2] += (shift+eo_shift-dof_shift)*rhs[c+lat->get_nc()/2];
         }
       }
       else
@@ -1074,6 +1090,7 @@ void apply_stencil_2D_M_dagger(complex<double>* lhs, complex<double>* rhs, void*
   stenc->apply_M_dagger(lhs, rhs); // lhs = M rhs
 }
 
+
 void apply_stencil_2D_M_dagger_M(complex<double>* lhs, complex<double>* rhs, void* extra_data)
 {
   Stencil2D* stenc = (Stencil2D*)extra_data;
@@ -1083,9 +1100,9 @@ void apply_stencil_2D_M_dagger_M(complex<double>* lhs, complex<double>* rhs, voi
     return;
   }
   zero_vector(stenc->expose_internal_cvector(), stenc->lat->get_size_cv());
-  stenc->apply_M(stenc->expose_internal_cvector(), rhs); // lhs = M rhs
+  stenc->apply_M(stenc->expose_internal_cvector(), rhs); // stenc->expose_internal_cvector() = M rhs
   zero_vector(lhs, stenc->lat->get_size_cv());
-  stenc->apply_M_dagger(lhs, stenc->expose_internal_cvector()); // lhs = M rhs
+  stenc->apply_M_dagger(lhs, stenc->expose_internal_cvector()); // lhs = M^\dagger stenc->expose_internal_cvector()
 }
 
 void apply_stencil_2D_M_M_dagger(complex<double>* lhs, complex<double>* rhs, void* extra_data)
