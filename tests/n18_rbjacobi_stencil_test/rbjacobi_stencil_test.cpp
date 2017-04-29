@@ -16,8 +16,7 @@ using namespace std;
 #include "blas/generic_vector.h"
 #include "verbosity/verbosity.h"
 #include "inverters/inverter_struct.h"
-#include "inverters/generic_bicgstab_l.h"
-#include "inverters/generic_cg.h"
+#include "inverters/generic_gcr.h"
 
 // QMG
 #include "lattice/lattice.h"
@@ -94,88 +93,107 @@ int main(int argc, char** argv)
   std::cout << "\n[WILSON-RBJACOBI-SITE]: \n";
   wilson_stencil->print_stencil_rbjacobi_site(0, 1);
 
-  return 0;
+  // We want to rebuild the next time.
+  delete wilson_stencil;
 
-  //////////////////////
-  // Test three: CGNR //
-  //////////////////////
+  ///////////////////////////
+  // Test three: GCR solve //
+  ///////////////////////////
 
   // Define inverter parameters (reused for test four)
   int max_iter = 4000;
   double tol = 1e-7;
 
   // Prepare verbosity struct (reused for test four)
-  inversion_verbose_struct* verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-CGNR]: "));
+  inversion_verbose_struct* verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-ORIGINAL]: "));
 
-  // Get vector size (reused for test four)
+  // Get vector size, matrix size (reused for test four)
   const int cv_size = lat_wilson->get_size_cv();
+  const int cm_size = lat_wilson->get_size_cm();
 
   // Prepare some storage (reused for test four)
   complex<double>* rhs = allocate_vector<complex<double>>(cv_size);
   complex<double>* extra = allocate_vector<complex<double>>(cv_size);
   complex<double>* lhs = allocate_vector<complex<double>>(cv_size);
+  complex<double>* lhs_backup = allocate_vector<complex<double>>(cv_size);
   complex<double>* check = allocate_vector<complex<double>>(cv_size);
 
   // Zero the vectors.
   zero_vector(rhs, cv_size);
   zero_vector(extra, cv_size);
   zero_vector(lhs, cv_size);
+  zero_vector(lhs_backup, cv_size);
   zero_vector(check, cv_size);
 
-  // Try an inversion.
-  cout << "\n\n[QMG-TEST]: Test 3, CGNR with Wilson2D.\n";
+  // Create a new Wilson op.
+  wilson_stencil = new Wilson2D(lat_wilson, mass, gauge_field);
+
+  // Hack to make the right block jacobi less trivial:
+  // Put gaussian noise into clover.
+  complex<double>* noise = allocate_vector<complex<double>>(cm_size);
+  gaussian(noise, cm_size, generator, 0.1);
+  cxpy(noise, wilson_stencil->clover, cm_size);
+  deallocate_vector(&noise);
+
+  // Build the rbjacobi stencil.
+  wilson_stencil->build_rbjacobi_stencil();
+
+  // Try an inversion with original op.
+  cout << "\n\n[QMG-TEST]: Test 3, GCR with noisy Wilson2D.\n";
 
   // Drop a point on the rhs on an even site.
   rhs[lat_wilson->cv_coord_to_index(x_len/2, y_len/2, 0)] = 1.0;
   double rhs_norm = sqrt(norm2sq(rhs, cv_size));
 
-  // Apply D^\dagger.
-  wilson_stencil->apply_M_dagger(extra, rhs);
+  // Put in a noisy initial guess, back it up.
+  gaussian(lhs, cv_size, generator);
+  copy_vector(lhs_backup, lhs, cv_size);
   
   // Reset double output format.
   cout << setiosflags(ios::scientific) << setprecision(6);
 
-  // Perform a CG inversion
-  inversion_info invif = minv_vector_cg(lhs, extra, cv_size, max_iter, tol, apply_stencil_2D_M_dagger_M, (void*)wilson_stencil, verb);
+  // Perform a BiCGstab-L inversion.
+  inversion_info invif = minv_vector_gcr(lhs, rhs, cv_size, max_iter, tol, apply_stencil_2D_M, (void*)wilson_stencil, verb);
 
   // Check and make sure we get the right answer.
   wilson_stencil->apply_M(check, lhs);
   double explicit_resid = sqrt(diffnorm2sq(rhs, check, cv_size))/rhs_norm;
-  cout << "[QMG-TEST]: The relative error for CGNR is " << explicit_resid << "\n";
+  cout << "[QMG-TEST]: The relative residual for original noisy Wilson2D is " << explicit_resid << "\n";
 
-  /////////////////////
-  // Test four: CGNE //
-  /////////////////////
+  //////////////////////////////////////////////////////
+  // Test four: GCR Solve, right block preconditioned //
+  //////////////////////////////////////////////////////
 
-  // Zero the vectors.
+  // Prepare vectors. 
   zero_vector(rhs, cv_size);
-  zero_vector(extra, cv_size);
+  copy_vector(extra, lhs_backup, cv_size);
   zero_vector(lhs, cv_size);
   zero_vector(check, cv_size);
 
   // Update verbosity structure. 
   delete verb;
-  verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-CGNE]: "));
+  verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-RBJACOBI]: "));
 
   // Try an inversion.
-  cout << "\n\n[QMG-TEST]: Test 4, Test CGNE with Wilson2D.\n";
+  cout << "\n\n[QMG-TEST]: Test 4, GCR with right block preconditioned noisy Wilson2D.\n";
 
   // Drop a point on the rhs on an even site.
   rhs[lat_wilson->cv_coord_to_index(x_len/2, y_len/2, 0)] = 1.0;
   rhs_norm = sqrt(norm2sq(rhs, cv_size));
 
-  // Perform a CG inversion
-  invif = minv_vector_cg(extra, rhs, cv_size, max_iter, tol, apply_stencil_2D_M_M_dagger, (void*)wilson_stencil, verb);
+  // Perform a BiCGstab-L inversion
+  invif = minv_vector_gcr(extra, rhs, cv_size, max_iter, tol, apply_stencil_2D_M_rbjacobi, (void*)wilson_stencil, verb);
 
   // Reconstruct the true solution.
-  wilson_stencil->apply_M_dagger(lhs, extra);
+  wilson_stencil->apply_M_rbjacobi_cinv(lhs, extra);
 
   // Check and make sure we get the right answer.
   wilson_stencil->apply_M(check, lhs);
   explicit_resid = sqrt(diffnorm2sq(rhs, check, cv_size))/rhs_norm;
-  cout << "[QMG-TEST]: The relative error for CGNE is " << explicit_resid << "\n";
+  cout << "[QMG-TEST]: The relative residual for right block jacobi is " << explicit_resid << "\n";
 
   deallocate_vector(&lhs);
+  deallocate_vector(&lhs_backup);
   deallocate_vector(&rhs);
   deallocate_vector(&check);
   deallocate_vector(&extra);
@@ -185,77 +203,5 @@ int main(int argc, char** argv)
   delete wilson_stencil;
   delete lat_wilson;
 
-  /*
-  // Get a vector size.
-  const int cv_size = lat->get_size_cv();
-
-  // Prepare some storage.
-  complex<double>* rhs = allocate_vector<complex<double>>(cv_size);
-  complex<double>* lhs = allocate_vector<complex<double>>(cv_size);
-  complex<double>* check = allocate_vector<complex<double>>(cv_size);
-
-  // Zero the vectors.
-  zero_vector(rhs, cv_size);
-  zero_vector(lhs, cv_size);
-  zero_vector(check, cv_size);
-
-  // Create a gauged wilson stencil.
-  Wilson2D* wilson_stencil = new Wilson2D(lat, mass, gauge_field);
-
-  // Try an inversion.
-  cout << "[QMG-TEST]: Test a matrix inversion on an even point.\n";
-
-  // Drop a point on the rhs on an even site, get norm.
-  rhs[lat->cv_coord_to_index(x_len/2, y_len/2, 0)] = 1.0;
-  double rhs_norm = sqrt(norm2sq(rhs, cv_size));
-
-  // Set an initial guess of random noise
-  // (for whatever, I nan out when I don't do this...)
-  gaussian(lhs, cv_size, generator);
-
-  // Define inverter parameters.
-  int max_iter = 4000;
-  double tol = 1e-7;
-  int bicgstab_l = 6;
-
-  // Prepare verbosity struct.
-  // By default prints with high verbosity, switch to VERB_SUMMARY or VERB_NONE
-  // if you want to see less.
-  inversion_verbose_struct* verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-BICGSTAB-6-INFO]: "));
-
-  // Reset double output format.
-  cout << setiosflags(ios::scientific) << setprecision(6);
-
-  // Perform a BiCGstab-L inversion
-  inversion_info invif = minv_vector_bicgstab_l(lhs, rhs, cv_size, max_iter, tol, bicgstab_l, apply_stencil_2D_M, (void*)wilson_stencil, verb);
-
-  // Check results.
-  if (invif.success == true)
-  {
-    cout << "[QMG-TEST]: Algorithm " << invif.name << " took " << invif.iter
-      << " iterations to reach a tolerance of "
-      << sqrt(invif.resSq)/rhs_norm << "\n";
-  }
-  else // failed, maybe.
-  {
-    cout << "[QMG-TEST]: Potential Error! Algorithm " << invif.name
-      << " took " << invif.iter << " iterations to reach a tolerance of "
-      << sqrt(invif.resSq)/rhs_norm << "\n";
-  }
-  cout << "[QMG-TEST]: Computing [check] = A [lhs] as a confirmation.\n";
-  // Check and make sure we get the right answer.
-  wilson_stencil->apply_M(check, lhs);
-  double explicit_resid = sqrt(diffnorm2sq(rhs, check, cv_size))/rhs_norm;
-  cout << "[QMG-TEST]: The relative error is " << explicit_resid << "\n";
-  
-  // Clean up.
-  deallocate_vector(&lhs);
-  deallocate_vector(&rhs);
-  deallocate_vector(&check);
-  deallocate_vector(&gauge_field);
-
-  delete verb; 
-  delete wilson_stencil;
-
-  return 0;*/
+  return 0;
 }
