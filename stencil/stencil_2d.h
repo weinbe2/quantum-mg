@@ -59,7 +59,7 @@ enum stencil_type
   QMG_MATVEC_ORIGINAL = 0, // apply original op
   QMG_MATVEC_DAGGER = 1, // apply op dagger
   QMG_MATVEC_RIGHT_JACOBI = 2, // apply right block jacobi
-  QMG_MATVEC_RIGHT_EO = 3, // apply eo right block jacobi
+  QMG_MATVEC_RIGHT_SCHUR = 3, // apply schur eo right block jacobi
   QMG_MATVEC_M_MDAGGER = 4, // apply M M^dagger
   QMG_MATVEC_MDAGGER_M = 5, // apply M^dagger M
 };
@@ -77,6 +77,9 @@ protected:
 
   // Exposed extra cvector.
   complex<double>* extra_cvector;
+
+  // Temporary space for even-odd solve. Only allocated if needed.
+  complex<double>* eo_cvector; 
 
 public:
   // Associated lattice!
@@ -179,6 +182,9 @@ public:
 
     // Allocate extra memory.
     extra_cvector = allocate_vector<complex<double>>(lat->get_size_cv());
+
+    // Only allocate the even-odd vector if needed.
+    eo_cvector = 0;
     
     // Set all dagger variables to zero.
     built_dagger = false;
@@ -210,6 +216,9 @@ public:
 
     // Deallocate extra memory.
     deallocate_vector(&extra_cvector);
+
+    // Deallocate eo vector.
+    if (eo_cvector != 0) { deallocate_vector(&eo_cvector); }
 
     if (dagger_clover != 0) { deallocate_vector(&dagger_clover); }
     if (dagger_hopping != 0) { deallocate_vector(&dagger_hopping); }
@@ -1097,6 +1106,58 @@ public:
     dof_shift = std::conj(dof_shift);
   }
 
+  ///////////////////////////////
+  // NORMAL EQUATION FUNCTIONS //
+  ///////////////////////////////
+
+  void apply_M_dagger_M(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger_M, but the dagger stencil has not been built.\n";
+      return;
+    }
+
+    zero_vector(extra_cvector, lat->get_size_cv());
+    apply_M(extra_cvector, rhs);
+    apply_M_dagger(lhs, extra_cvector);
+  }
+
+  void prepare_M_dagger_M(complex<double>* Mdagger_b, complex<double>* b)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call prepare_M_dagger_M, but the dagger stencil has not been built.\n";
+      return;
+    }
+
+    apply_M_dagger(Mdagger_b, b);
+  }
+
+  void apply_M_M_dagger(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_M_dagger, but the dagger stencil has not been built.\n";
+      return;
+    }
+
+    zero_vector(extra_cvector, lat->get_size_cv());
+    apply_M_dagger(extra_cvector, rhs);
+    apply_M(lhs, extra_cvector);
+  }
+
+  void reconstruct_M_M_dagger(complex<double>* x, complex<double>* y)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_M_dagger, but the dagger stencil has not been built.\n";
+      return;
+    }
+
+    apply_M_dagger(x, y);
+  }
+
   //////////////////////////////////////////
   // RIGHT BLOCK JACOBI STENCIL FUNCTIONS //
   //////////////////////////////////////////
@@ -1503,6 +1564,185 @@ public:
     std::swap(clover, rbjacobi_cinv);
   }
 
+  // Reconstruct right block jacobi solve, which is just applying the above function.
+  // Sort of redundant. 
+  void reconstruct_M_rbjacobi(complex<double>* x, complex<double>* y)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_rbjacobi_cinv, but the rbjacobi stencil has not been allocated.\n";
+      return;
+    }
+
+    apply_M_rbjacobi_cinv(x, y);
+  }
+
+  ////////////////////////////////////////
+  // RIGHT BLOCK JACOBI SCHUR FUNCTIONS //
+  ////////////////////////////////////////
+
+  // There are no versions of this that perform left, right, clover only, etc.
+  void apply_M_rbjacobi_schur(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbjacobi_schur, but the rbjacobi stencil has not been allocated.\n";
+      return;
+    }
+
+    // Apply (1 - D_{eo} D^{-1}_{oo} D_{oe} D^{-1}_{ee}))
+    
+    // Allocate if needed, zero the temporary vector. 
+    if (eo_cvector == 0) { eo_cvector = allocate_vector<complex<double>>(lat->get_size_cv()); }
+    zero_vector(eo_cvector, lat->get_size_cv()); 
+
+    // Apply D_{oe} D^{-1}_{ee}
+    apply_M_rbjacobi_oe(eo_cvector, rhs);
+
+    // Apply D_{eo} D^{-1}_{oo}. 
+    apply_M_rbjacobi_eo(eo_cvector, eo_cvector);
+
+    // Form the final solution.
+    caxpbyz(1.0, rhs, -1.0, eo_cvector, lhs, lat->get_size_cv()/2);
+  }
+
+  // Prepare for a right block jacobi schur solve.
+  // Forms b_r = b_e - D_{eo} D^{-1}_{oo} b_{o}
+  void prepare_M_rbjacobi_schur(complex<double>* b_r, complex<double>* b)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call prepare_M_rbjacobi_schur, but the rbjacobi stencil has not been allocated.\n";
+      return;
+    }
+
+    // Apply D_{eo} D^{-1}_{oo}
+    apply_M_rbjacobi_eo(b_r, b);
+
+    // Put in b_e contribution.
+    cxpay(b, -1.0, b_r, lat->get_size_cv()/2);
+
+    // Zero b_o contribution
+    zero_vector(b+lat->get_size_cv()/2, lat->get_size_cv()/2);
+  }
+
+  // Reconstruct a right block jacobi schur solve.
+  // x_e = D_{ee}^{-1} y_e, x_o = D^{-1}_{oo}(b_o - D_{oe} D^{-1}_{ee} y_e)
+  void reconstruct_M_rbjacobi_schur(complex<double>* x, complex<double>* y_e, complex<double>* b)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_rbjacobi_schur, but the rbjacobi stencil has not been allocated.\n";
+      return;
+    }
+
+    // Allocate if needed, zero the temporary vector. 
+    if (eo_cvector == 0) { eo_cvector = allocate_vector<complex<double>>(lat->get_size_cv()); }
+    zero_vector(eo_cvector, lat->get_size_cv()); 
+
+    // We'll form x_o first, since x_e is easy.
+
+    // Apply D_{oe} D^{-1}_{ee} y_e
+    apply_M_rbjacobi_oe(eo_cvector, y_e);
+
+    // Form b_o - D_{oe} D^{-1}_ee y_e
+    cxpay(b+lat->get_size_cv()/2, -1.0, eo_cvector+lat->get_size_cv()/2, lat->get_size_cv()/2);
+
+    // Copy y_e into eo_cvector so we can do the cinv in one pass.
+    copy_vector(eo_cvector, y_e, lat->get_size_cv()/2);
+
+    // Apply D_{ee}^{-1}, D_{oo}^{-1}
+    apply_M_rbjacobi_cinv(x, eo_cvector);
+  }
+
+  //////////////////////////
+  // CONVENIENT FUNCTIONS //
+  //////////////////////////
+
+  void apply_M(complex<double>* lhs, complex<double>* rhs, stencil_type stencil)
+  {
+    switch (stencil)
+    {
+      case QMG_MATVEC_ORIGINAL:
+        apply_M(lhs, rhs);
+        break;
+      case QMG_MATVEC_DAGGER:
+        apply_M_dagger(lhs, rhs);
+        break;
+      case QMG_MATVEC_RIGHT_JACOBI:
+        apply_M_rbjacobi(lhs, rhs);
+        break;
+      case QMG_MATVEC_RIGHT_SCHUR:
+        apply_M_rbjacobi_schur(lhs, rhs);
+        break;
+      case QMG_MATVEC_M_MDAGGER:
+        apply_M_M_dagger(lhs, rhs);
+        break;
+      case QMG_MATVEC_MDAGGER_M:
+        apply_M_dagger_M(lhs, rhs);
+        break;
+      default:
+        cout << "[QMG-ERROR]: Tried to call apply_M with invalid stencil type.\n";
+        break;
+    }
+  }
+
+  void prepare_M(complex<double>* b_prep, complex<double>* b, stencil_type stencil)
+  {
+    switch (stencil)
+    {
+      case QMG_MATVEC_ORIGINAL:
+        copy_vector(b_prep, b, lat->get_size_cv());
+        break;
+      case QMG_MATVEC_DAGGER:
+        copy_vector(b_prep, b, lat->get_size_cv());
+        break;
+      case QMG_MATVEC_RIGHT_JACOBI:
+        copy_vector(b_prep, b, lat->get_size_cv());
+        break;
+      case QMG_MATVEC_RIGHT_SCHUR:
+        prepare_M_rbjacobi_schur(b_prep, b);
+        break;
+      case QMG_MATVEC_M_MDAGGER:
+        copy_vector(b_prep, b, lat->get_size_cv());
+        break;
+      case QMG_MATVEC_MDAGGER_M:
+        prepare_M_dagger_M(b_prep, b);
+        break;
+      default:
+        cout << "[QMG-ERROR]: Tried to call prepare_M with invalid stencil type.\n";
+        break;
+    }
+  }
+
+  void reconstruct_M(complex<double>* x, complex<double>* y, complex<double>* b, stencil_type stencil)
+  {
+    switch (stencil)
+    {
+      case QMG_MATVEC_ORIGINAL:
+        copy_vector(x, y, lat->get_size_cv());
+        break;
+      case QMG_MATVEC_DAGGER:
+        copy_vector(x, y, lat->get_size_cv());
+        break;
+      case QMG_MATVEC_RIGHT_JACOBI:
+        reconstruct_M_rbjacobi(x, y);
+        break;
+      case QMG_MATVEC_RIGHT_SCHUR:
+        reconstruct_M_rbjacobi_schur(x, y, b);
+        break;
+      case QMG_MATVEC_M_MDAGGER:
+        reconstruct_M_M_dagger(x, y);
+        break;
+      case QMG_MATVEC_MDAGGER_M:
+        copy_vector(x, y, lat->get_size_cv());
+        break;
+      default:
+        cout << "[QMG-ERROR]: Tried to call reconstruct_M with invalid stencil type.\n";
+        break;
+    }
+  }
+
 };
 
 // Special C function wrappers for stencil applications.
@@ -1557,7 +1797,6 @@ void apply_stencil_2D_M_M_dagger(complex<double>* lhs, complex<double>* rhs, voi
 void apply_stencil_2D_M_rbjacobi(complex<double>* lhs, complex<double>* rhs, void* extra_data)
 {
   Stencil2D* stenc = (Stencil2D*)extra_data;
-  zero_vector(lhs, stenc->lat->get_size_cv());
   if (!stenc->built_rbjacobi)
   {
     std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_rbjacobi, but the rbjacobi stencil has not been built.\n";
@@ -1570,7 +1809,6 @@ void apply_stencil_2D_M_rbjacobi(complex<double>* lhs, complex<double>* rhs, voi
 void apply_stencil_2D_M_rbjacobi_cinv(complex<double>* lhs, complex<double>* rhs, void* extra_data)
 {
   Stencil2D* stenc = (Stencil2D*)extra_data;
-  zero_vector(lhs, stenc->lat->get_size_cv());
   if (!stenc->built_rbjacobi)
   {
     std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_rbjacobi_cinv, but the rbjacobi stencil has not been built.\n";
@@ -1579,6 +1817,15 @@ void apply_stencil_2D_M_rbjacobi_cinv(complex<double>* lhs, complex<double>* rhs
   stenc->apply_M_rbjacobi_cinv(lhs, rhs); // lhs = M rhs
 }
 
-
+void apply_stencil_2D_M_rbjacobi_schur(complex<double>* lhs, complex<double>* rhs, void* extra_data)
+{
+  Stencil2D* stenc = (Stencil2D*)extra_data;
+  if (!stenc->built_rbjacobi)
+  {
+    std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_rbjacobi_schur, but the rbjacobi stencil has not been built.\n";
+    return;
+  }
+  stenc->apply_M_rbjacobi_schur(lhs, rhs); // lhs = M rhs
+}
 
 #endif // QMG_STENCIL_2D

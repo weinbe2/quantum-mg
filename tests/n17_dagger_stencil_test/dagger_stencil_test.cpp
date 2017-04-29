@@ -129,7 +129,7 @@ int main(int argc, char** argv)
   double rhs_norm = sqrt(norm2sq(rhs, cv_size));
 
   // Apply D^\dagger.
-  wilson_stencil->apply_M_dagger(extra, rhs);
+  wilson_stencil->prepare_M(extra, rhs, QMG_MATVEC_MDAGGER_M);
   
   // Reset double output format.
   cout << setiosflags(ios::scientific) << setprecision(6);
@@ -167,7 +167,7 @@ int main(int argc, char** argv)
   invif = minv_vector_cg(extra, rhs, cv_size, max_iter, tol, apply_stencil_2D_M_M_dagger, (void*)wilson_stencil, verb);
 
   // Reconstruct the true solution.
-  wilson_stencil->apply_M_dagger(lhs, extra);
+  wilson_stencil->reconstruct_M(lhs, extra, rhs, QMG_MATVEC_M_MDAGGER);
 
   // Check and make sure we get the right answer.
   wilson_stencil->apply_M(check, lhs);
