@@ -93,7 +93,6 @@ public:
   {
     QMG_MULTIGRID_PRECOND_ORIGINAL = 0, // Original stencil
     QMG_MULTIGRID_PRECOND_RIGHT_BLOCK_JACOBI = 1, // Right block jacobi stencil.
-    QMG_MULTIGRID_PRECOND_SCHUR = 2, // Schur decomposed right block jacobi stencil.
   };
     
   // Constructor. Takes in fine lattice and stencil.
@@ -271,7 +270,7 @@ public:
     // Deal with stencil.
     if (build_stencil)
     {
-      stencil_list.push_back(new CoarseOperator2D(new_lat, stencil_list[num_levels-2], lattice_list[num_levels-2], new_transfer, is_chiral));
+      stencil_list.push_back(new CoarseOperator2D(new_lat, stencil_list[num_levels-2], lattice_list[num_levels-2], new_transfer, is_chiral, (build_stencil_from == QMG_MULTIGRID_PRECOND_ORIGINAL) ? false : true));
       is_stencil_managed.push_back(true);
     }
     else

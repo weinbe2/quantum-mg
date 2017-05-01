@@ -81,6 +81,17 @@ protected:
   // Temporary space for even-odd solve. Only allocated if needed.
   complex<double>* eo_cvector; 
 
+  // Backups of shift, eo_shift, and dof_shift.
+  std::complex<double> shift_backup;
+  std::complex<double> eo_shift_backup;
+  std::complex<double> dof_shift_backup;
+
+  // Have we swapped to daggered stencils?
+  bool swap_dagger;
+
+  // Have we swapped to rbjacobi stencils?
+  bool swap_rbjacobi;
+
 public:
   // Associated lattice!
   Lattice2D* lat; 
@@ -200,6 +211,13 @@ public:
     rbjacobi_twolink = 0;
     rbjacobi_corner = 0;
     rbjacobi_cinv = 0;
+
+    // Set swaps and backups.
+    shift_backup = shift;
+    eo_shift_backup = eo_shift;
+    dof_shift_backup = dof_shift;
+    swap_dagger = false;
+    swap_rbjacobi = false; 
 
   }
   
@@ -891,6 +909,44 @@ public:
 
   }
 
+  // Perform swaps to put dagger stencils in/out of place.
+  bool perform_swap_dagger()
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call perform_swap_dagger, but the dagger stencil has not been allocated.\n";
+      return false;
+    }
+
+    if (!swap_dagger)
+    {
+      // Swap dagger stencils in.
+      // Pointer swaaaap.
+      std::swap(clover, dagger_clover);
+      std::swap(hopping, dagger_hopping);
+      std::swap(twolink, dagger_twolink);
+      std::swap(corner, dagger_corner);
+      shift = std::conj(shift);
+      eo_shift = std::conj(eo_shift);
+      dof_shift = std::conj(dof_shift);
+      swap_dagger = true;
+    }
+    else
+    {
+      // Swap back.
+      std::swap(clover, dagger_clover);
+      std::swap(hopping, dagger_hopping);
+      std::swap(twolink, dagger_twolink);
+      std::swap(corner, dagger_corner);
+      shift = shift_backup;
+      eo_shift = eo_shift_backup;
+      dof_shift = dof_shift_backup;
+      swap_dagger = false;
+    }
+
+    return swap_dagger;
+  }
+
   // Gettin' lazy over here!
 
   void print_stencil_dagger_site(int x, int y, string prefix = "")
@@ -901,22 +957,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(clover, dagger_clover);
-    std::swap(hopping, dagger_hopping);
-    std::swap(twolink, dagger_twolink);
-    std::swap(corner, dagger_corner);
-    shift = std::conj(shift);
-    eo_shift = std::conj(eo_shift);
-    dof_shift = std::conj(dof_shift);
+    perform_swap_dagger();
     print_stencil_site(x, y, prefix);
-    std::swap(clover, dagger_clover);
-    std::swap(hopping, dagger_hopping);
-    std::swap(twolink, dagger_twolink);
-    std::swap(corner, dagger_corner);
-    shift = std::conj(shift);
-    eo_shift = std::conj(eo_shift);
-    dof_shift = std::conj(dof_shift);
+    perform_swap_dagger();
   }
 
   
@@ -934,10 +977,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(clover, dagger_clover);
+    perform_swap_dagger();
     apply_M_clover(lhs, rhs);
-    std::swap(clover, dagger_clover);
+    perform_swap_dagger();
   }
 
   void apply_M_dagger_eo(complex<double>* lhs, complex<double>* rhs)
@@ -954,10 +996,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
     apply_M_eo(lhs, rhs);
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
   }
 
   void apply_M_dagger_eo(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
@@ -974,10 +1015,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
     apply_M_eo(lhs, rhs, dir);
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
   }
   
   void apply_M_dagger_oe(complex<double>* lhs, complex<double>* rhs)
@@ -994,10 +1034,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
     apply_M_oe(lhs, rhs);
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
   }
 
   void apply_M_dagger_oe(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
@@ -1014,10 +1053,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
     apply_M_oe(lhs, rhs, dir);
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
   }
 
   void apply_M_dagger_hopping(complex<double>* lhs, complex<double>* rhs)
@@ -1034,10 +1072,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
     apply_M_hopping(lhs, rhs);
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
   }
 
   void apply_M_dagger_hopping(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
@@ -1054,10 +1091,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
     apply_M_hopping(lhs, rhs);
-    std::swap(hopping, dagger_hopping);
+    perform_swap_dagger();
   }
   
   // void apply_M_dagger_twolink(complex<double>* lhs, complex<double>* rhs);
@@ -1071,13 +1107,9 @@ public:
       return;
     }
 
-    shift = std::conj(shift);
-    eo_shift = std::conj(eo_shift);
-    dof_shift = std::conj(dof_shift);
+    perform_swap_dagger();
     apply_M_shift(lhs, rhs);
-    shift = std::conj(shift);
-    eo_shift = std::conj(eo_shift);
-    dof_shift = std::conj(dof_shift);
+    perform_swap_dagger();
   }
 
   void apply_M_dagger(complex<double>* lhs, complex<double>* rhs)
@@ -1088,22 +1120,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(clover, dagger_clover);
-    std::swap(hopping, dagger_hopping);
-    std::swap(twolink, dagger_twolink);
-    std::swap(corner, dagger_corner);
-    shift = std::conj(shift);
-    eo_shift = std::conj(eo_shift);
-    dof_shift = std::conj(dof_shift);
+    perform_swap_dagger();
     apply_M(lhs, rhs);
-    std::swap(clover, dagger_clover);
-    std::swap(hopping, dagger_hopping);
-    std::swap(twolink, dagger_twolink);
-    std::swap(corner, dagger_corner);
-    shift = std::conj(shift);
-    eo_shift = std::conj(eo_shift);
-    dof_shift = std::conj(dof_shift);
+    perform_swap_dagger();
   }
 
   ///////////////////////////////
@@ -1313,6 +1332,44 @@ public:
 
   }
 
+  /// Perform swaps to put rbjacobi stencils in/out of place.
+  bool perform_swap_rbjacobi()
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call perform_swap_rbjacobi, but the rbjacobi stencil has not been allocated.\n";
+      return false;
+    }
+
+    if (!swap_rbjacobi)
+    {
+      // Swap rbjacobi stencils in.
+      // Pointer swaaaap.
+      std::swap(clover, rbjacobi_clover);
+      std::swap(hopping, rbjacobi_hopping);
+      std::swap(twolink, rbjacobi_twolink);
+      std::swap(corner, rbjacobi_corner);
+      shift = 0.0;
+      eo_shift = 0.0;
+      dof_shift = 0.0;
+      swap_rbjacobi = true;
+    }
+    else
+    {
+      // Swap back.
+      std::swap(clover, rbjacobi_clover);
+      std::swap(hopping, rbjacobi_hopping);
+      std::swap(twolink, rbjacobi_twolink);
+      std::swap(corner, rbjacobi_corner);
+      shift = shift_backup;
+      eo_shift = eo_shift_backup;
+      dof_shift = dof_shift_backup;
+      swap_rbjacobi = false;
+    }
+
+    return swap_rbjacobi;
+  }
+
 
   void print_stencil_rbjacobi_site(int x, int y, string prefix = "")
   {
@@ -1322,18 +1379,7 @@ public:
       return;
     }
 
-    std::complex<double> shift_backup = shift;
-    std::complex<double> eo_shift_backup = eo_shift; 
-    std::complex<double> dof_shift_backup = dof_shift; 
-
-    // Pointer swaaaap.
-    std::swap(clover, rbjacobi_clover);
-    std::swap(hopping, rbjacobi_hopping);
-    std::swap(twolink, rbjacobi_twolink);
-    std::swap(corner, rbjacobi_corner);
-    shift = 0.0;
-    eo_shift = 0.0;
-    dof_shift = 0.0;
+    perform_swap_rbjacobi();
     print_stencil_site(x, y, prefix);
     if (clover != 0)
     {
@@ -1349,13 +1395,7 @@ public:
         cout << "\n";
       }
     }
-    std::swap(clover, rbjacobi_clover);
-    std::swap(hopping, rbjacobi_hopping);
-    std::swap(twolink, rbjacobi_twolink);
-    std::swap(corner, rbjacobi_corner);
-    shift = shift_backup;
-    eo_shift = eo_shift_backup;
-    dof_shift = dof_shift_backup;
+    perform_swap_rbjacobi();
   }
 
   
@@ -1391,10 +1431,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
     apply_M_eo(lhs, rhs);
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
   }
 
   void apply_M_rbjacobi_eo(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
@@ -1411,10 +1450,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
     apply_M_eo(lhs, rhs, dir);
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
   }
   
   void apply_M_rbjacobi_oe(complex<double>* lhs, complex<double>* rhs)
@@ -1431,10 +1469,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
     apply_M_oe(lhs, rhs);
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
   }
 
   void apply_M_rbjacobi_oe(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
@@ -1451,10 +1488,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
     apply_M_oe(lhs, rhs, dir);
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
   }
 
   void apply_M_rbjacobi_hopping(complex<double>* lhs, complex<double>* rhs)
@@ -1471,10 +1507,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
     apply_M_hopping(lhs, rhs);
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
   }
 
   void apply_M_rbjacobi_hopping(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
@@ -1491,10 +1526,9 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
     apply_M_hopping(lhs, rhs);
-    std::swap(hopping, rbjacobi_hopping);
+    perform_swap_rbjacobi();
   }
   
   // void apply_M_rbjacobi_twolink(complex<double>* lhs, complex<double>* rhs);
@@ -1521,26 +1555,9 @@ public:
       return;
     }
 
-    std::complex<double> shift_backup = shift;
-    std::complex<double> eo_shift_backup = eo_shift; 
-    std::complex<double> dof_shift_backup = dof_shift; 
-
-    // Pointer swaaaap.
-    std::swap(clover, rbjacobi_clover);
-    std::swap(hopping, rbjacobi_hopping);
-    std::swap(twolink, rbjacobi_twolink);
-    std::swap(corner, rbjacobi_corner);
-    shift = 0.0;
-    eo_shift = 0.0;
-    dof_shift = 0.0;
+    perform_swap_rbjacobi();
     apply_M(lhs, rhs);
-    std::swap(clover, rbjacobi_clover);
-    std::swap(hopping, rbjacobi_hopping);
-    std::swap(twolink, rbjacobi_twolink);
-    std::swap(corner, rbjacobi_corner);
-    shift = shift_backup;
-    eo_shift = eo_shift_backup;
-    dof_shift = dof_shift_backup;
+    perform_swap_rbjacobi();
   }
 
   // Special for the right block jacobi, apply the clover inverse.
@@ -1558,7 +1575,7 @@ public:
       return;
     }
 
-    // Pointer swaaaap.
+    // Special swaaaap.
     std::swap(clover, rbjacobi_cinv);
     apply_M_clover(lhs, rhs);
     std::swap(clover, rbjacobi_cinv);

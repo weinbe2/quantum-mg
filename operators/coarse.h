@@ -35,6 +35,9 @@ protected:
   // Is it a chiral stencil?
   bool is_chiral; 
 
+  // Is this the coarse version of a right block jacobi stencil?
+  bool use_rbjacobi;
+
 public:
 
   // Base constructor.
@@ -44,8 +47,8 @@ public:
   // out what the stencil will look like after coarsening?
   // Also need some smart way to deal with the mass (for \gamma_5 ops)
   // Currently this function only transfers identity shifts.
-  CoarseOperator2D(Lattice2D* in_lat, Stencil2D* fine_stencil, Lattice2D* fine_lattice, TransferMG* transfer, bool is_chiral = false)
-    : Stencil2D(in_lat, QMG_PIECE_CLOVER_HOPPING, fine_stencil->get_shift(), 0.0, 0.0), fine_lat(fine_lattice), is_chiral(is_chiral)
+  CoarseOperator2D(Lattice2D* in_lat, Stencil2D* fine_stencil, Lattice2D* fine_lattice, TransferMG* transfer, bool is_chiral = false, bool use_rbjacobi = false)
+    : Stencil2D(in_lat, QMG_PIECE_CLOVER_HOPPING, 0.0, 0.0, 0.0), fine_lat(fine_lattice), is_chiral(is_chiral), use_rbjacobi(use_rbjacobi)
   {
     const int coarse_vol = lat->get_volume();
     const int coarse_size = lat->get_size_cv();
@@ -57,12 +60,19 @@ public:
     tmp_fine = allocate_vector<complex<double>>(fine_size);
     tmp_Afine = allocate_vector<complex<double>>(fine_size);
 
+    // Prepare for rbjacobi build. 
+    if (use_rbjacobi)
+    {
+      fine_stencil->perform_swap_rbjacobi();
+    }
+
     ///////////////////////////////////
     // Step 0: Transfer shifts over. //
     ///////////////////////////////////
 
     // We need some set of flags concerning transfering
     // eo and dof shifts over...
+    shift = fine_stencil->get_shift();
 
     ///////////////////////////////////////////////////////////////////////////
     // Step 1: learn about (some of) the coarse clover from the fine clover. //
@@ -375,6 +385,12 @@ public:
           for (int c = 0; c < coarse_nc; c++)
             hopping[lat->hopping_coord_to_index(i, c, color, QMG_DIR_INDEX_YM1)] += tmp_coarse[lat->cv_coord_to_index(i, c)];
 
+    }
+
+    // Undo rbjacobi build. 
+    if (use_rbjacobi)
+    {
+      fine_stencil->perform_swap_rbjacobi();
     }
 
     // Still need to coarsen in 2-link, corner terms...

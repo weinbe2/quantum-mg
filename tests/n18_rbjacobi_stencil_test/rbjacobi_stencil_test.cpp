@@ -218,7 +218,7 @@ int main(int argc, char** argv)
   cout << "MEH " << norm2sq(extra, cv_size) << "\n";
 
   // Perform a GCR inversion
-  invif = minv_vector_gcr(extra_2, extra, cv_size/2, max_iter, tol, apply_stencil_2D_M_rbjacobi_schur, (void*)wilson_stencil, verb);
+  invif = minv_vector_gcr_restart(extra_2, extra, cv_size/2, max_iter, tol, restart_freq, apply_stencil_2D_M_rbjacobi_schur, (void*)wilson_stencil, verb);
 
   // Reconstruct the true solution.
   wilson_stencil->reconstruct_M(lhs, extra_2, rhs, QMG_MATVEC_RIGHT_SCHUR);
