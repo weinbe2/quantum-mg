@@ -99,9 +99,10 @@ int main(int argc, char** argv)
     // Arg 1: New lattice
     // Arg 2: New transfer object (between new and prev lattice)
     // Arg 3: Should we construct the coarse stencil?
+    // Arg 4: Is the operator chiral? (No for Laplace)
     // Arg 4: What should we construct the coarse stencil from? (Not relevant yet.)
     // Arg 5: Non-block-orthogonalized null vector.
-    mg_object->push_level(lats[i], transfer_objs[i-1], true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
+    mg_object->push_level(lats[i], transfer_objs[i-1], true, GaugedLaplace2D::has_chirality(), MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
 
     //mg_object->get_stencil(i)->print_stencil_site(0,0,"Site: ");
 

@@ -39,6 +39,16 @@ protected:
   bool use_rbjacobi;
 
 public:
+  // Enum for if we should build the dagger and/or rbjacobi stencil.
+  enum QMGCoarseBuildStencil
+  {
+    QMG_COARSE_BUILD_ORIGINAL = 0, // build coarse stencil only.
+    QMG_COARSE_BUILD_DAGGER = 1, // also build dagger stencil
+    QMG_COARSE_BUILD_RBJACOBI = 2, // also build rbjacobi stencil
+    QMG_COARSE_BUILD_DAGGER_RBJACOBI = 3, // build both dagger, rbjacobi stencil.
+  };
+
+public:
 
   // Base constructor.
   // NOTE! Need a way to determine QMG_PIECE_... based on the
@@ -47,7 +57,7 @@ public:
   // out what the stencil will look like after coarsening?
   // Also need some smart way to deal with the mass (for \gamma_5 ops)
   // Currently this function only transfers identity shifts.
-  CoarseOperator2D(Lattice2D* in_lat, Stencil2D* fine_stencil, Lattice2D* fine_lattice, TransferMG* transfer, bool is_chiral = false, bool use_rbjacobi = false)
+  CoarseOperator2D(Lattice2D* in_lat, Stencil2D* fine_stencil, Lattice2D* fine_lattice, TransferMG* transfer, bool is_chiral = false, bool use_rbjacobi = false, QMGCoarseBuildStencil build_extra = QMG_COARSE_BUILD_ORIGINAL)
     : Stencil2D(in_lat, QMG_PIECE_CLOVER_HOPPING, 0.0, 0.0, 0.0), fine_lat(fine_lattice), is_chiral(is_chiral), use_rbjacobi(use_rbjacobi)
   {
     const int coarse_vol = lat->get_volume();
@@ -391,6 +401,18 @@ public:
     if (use_rbjacobi)
     {
       fine_stencil->perform_swap_rbjacobi();
+    }
+
+    // Build dagger, rbjacobi stencils
+
+    if (build_extra == QMG_COARSE_BUILD_DAGGER || build_extra == QMG_COARSE_BUILD_DAGGER_RBJACOBI)
+    {
+      build_dagger_stencil();
+    }
+
+    if (build_extra == QMG_COARSE_BUILD_RBJACOBI || build_extra == QMG_COARSE_BUILD_DAGGER_RBJACOBI)
+    {
+      build_rbjacobi_stencil();
     }
 
     // Still need to coarsen in 2-link, corner terms...

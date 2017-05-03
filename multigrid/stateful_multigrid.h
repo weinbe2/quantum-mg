@@ -42,6 +42,12 @@ public:
   // This structure needs to exist for each fine level.
   struct LevelInfoMG
   {
+    /* FINE OP */
+
+    // Whether we're using the original, rbjacobi, or schur solve.
+    // Should match the coarse type from the level above.
+    QMGStencilType fine_stencil_app;
+
     /* PRESMOOTHER */
 
     // Tolerance for presmoother (for a flexible presmoother)
@@ -66,6 +72,10 @@ public:
 
     /* COARSE SOLVE */
 
+    // Whether we're using the original, rbjacobi, schur, CGNE, CGNR solve.
+    // Can only be CGNE or CGNR on the coarsest level, otherwise throw error.
+    QMGStencilType coarse_stencil_app; 
+
     // Tolerance for coarse solve (for a flexible coarse solver)
     double coarse_tol;
 
@@ -77,8 +87,10 @@ public:
 
     // By default, there's "no" stopping condition.
     LevelInfoMG()
-      : pre_tol(1e-20), pre_iters(1000000),
+      : fine_stencil_app(QMG_MATVEC_ORIGINAL), 
+        pre_tol(1e-20), pre_iters(1000000),
         post_tol(1e-20), post_iters(1000000),
+        coarse_stencil_app(QMG_MATVEC_ORIGINAL),
         coarse_tol(1e-20), coarse_iters(1000000),
         coarse_restart_freq(32)
     { ; }

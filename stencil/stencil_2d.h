@@ -54,7 +54,7 @@ enum chirality_state
 };
 
 // enum for what type of matrix op to prepare, apply, reconstruct.
-enum stencil_type
+enum QMGStencilType
 {
   QMG_MATVEC_ORIGINAL = 0, // apply original op
   QMG_MATVEC_DAGGER = 1, // apply op dagger
@@ -1676,7 +1676,7 @@ public:
   // CONVENIENT FUNCTIONS //
   //////////////////////////
 
-  void apply_M(complex<double>* lhs, complex<double>* rhs, stencil_type stencil)
+  void apply_M(complex<double>* lhs, complex<double>* rhs, QMGStencilType stencil)
   {
     switch (stencil)
     {
@@ -1704,7 +1704,7 @@ public:
     }
   }
 
-  void prepare_M(complex<double>* b_prep, complex<double>* b, stencil_type stencil)
+  void prepare_M(complex<double>* b_prep, complex<double>* b, QMGStencilType stencil)
   {
     switch (stencil)
     {
@@ -1732,7 +1732,7 @@ public:
     }
   }
 
-  void reconstruct_M(complex<double>* x, complex<double>* y, complex<double>* b, stencil_type stencil)
+  void reconstruct_M(complex<double>* x, complex<double>* y, complex<double>* b, QMGStencilType stencil)
   {
     switch (stencil)
     {

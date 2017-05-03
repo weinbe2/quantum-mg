@@ -249,11 +249,12 @@ public:
   // Arg 2: New transfer object.
   // Arg 3: If we should explicitly build the new coarse stencil or not.
   // Arg 4: If the null vectors preserve/have chirality or not.
-  // Arg 5: (Not yet implemented) If we should build the new coarse stencil from a preconditioned
+  // Arg 5: If we should build the new coarse stencil from a preconditioned
   //          version of the stencil a level up.
-  // Arg 6: Copy in the global null vectors. These are null vectors
+  // Arg 6: If we should build the dagger and/or rbjacobi stencil for the new coarse op.
+  // Arg 7: Copy in the global null vectors. These are null vectors
   //          that are not yet block orthonormalized.
-  void push_level(Lattice2D* new_lat, TransferMG* new_transfer, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, complex<double>** nvecs = 0)
+  void push_level(Lattice2D* new_lat, TransferMG* new_transfer, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, CoarseOperator2D::QMGCoarseBuildStencil build_extra = CoarseOperator2D::QMG_COARSE_BUILD_ORIGINAL, complex<double>** nvecs = 0)
   {
     // Update number of levels.
     num_levels++;
@@ -270,21 +271,13 @@ public:
     // Deal with stencil.
     if (build_stencil)
     {
-      stencil_list.push_back(new CoarseOperator2D(new_lat, stencil_list[num_levels-2], lattice_list[num_levels-2], new_transfer, is_chiral, (build_stencil_from == QMG_MULTIGRID_PRECOND_ORIGINAL) ? false : true));
+      stencil_list.push_back(new CoarseOperator2D(new_lat, stencil_list[num_levels-2], lattice_list[num_levels-2], new_transfer, is_chiral, (build_stencil_from == QMG_MULTIGRID_PRECOND_ORIGINAL) ? false : true, build_extra));
       is_stencil_managed.push_back(true);
     }
     else
     {
       stencil_list.push_back(0);
       is_stencil_managed.push_back(false);
-    }
-
-    // What operator are we building the stencil from?
-    // At some point we'll at least support building it from
-    // the right block jacobi stencil...
-    if (build_stencil_from != QMG_MULTIGRID_PRECOND_ORIGINAL)
-    {
-      cout << "[QMG-ERROR]: MultigridMG does not support preconditioned stencils yet. Default to original stencil.\n";
     }
 
     // Copy global null vectors, if they're non-zero.
@@ -308,6 +301,12 @@ public:
     }
   }
 
+  // A flavor that only builds the original coarse operator, not the dagger or rbjacobi.
+  void push_level(Lattice2D* new_lat, TransferMG* new_transfer, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, complex<double>** nvecs = 0)
+  {
+    push_level(new_lat, new_transfer, build_stencil, is_chiral, build_stencil_from, CoarseOperator2D::QMG_COARSE_BUILD_ORIGINAL, nvecs);
+  }
+
   // A flavor of the function to push a new level
   // that assumes we're not building the coarse stencil,
   // but still wants to save global null vectors.
@@ -317,7 +316,7 @@ public:
   //          that are not yet block orthonormalized.
   void push_level(Lattice2D* new_lat, TransferMG* new_transfer,complex<double>** nvecs)
   {
-    push_level(new_lat, new_transfer, false, false, QMG_MULTIGRID_PRECOND_ORIGINAL, nvecs);
+    push_level(new_lat, new_transfer, false, false, QMG_MULTIGRID_PRECOND_ORIGINAL, CoarseOperator2D::QMG_COARSE_BUILD_ORIGINAL, nvecs);
   }
 
 
@@ -328,17 +327,24 @@ public:
   // That form is more for experimenting than for performance.
   // At some point it'll take preconditioner flags...
   // In math form, applies lhs = M rhs.
-  void apply_stencil(complex<double>* lhs, complex<double>* rhs, int i)
+  void apply_stencil(complex<double>* lhs, complex<double>* rhs, int i, QMGStencilType app_type = QMG_MATVEC_ORIGINAL)
   {
     if (i >= 0 && i < num_levels)
     {
       if (stencil_list[i] != 0)
       {
-        stencil_list[i]->apply_M(lhs, rhs);
+        stencil_list[i]->apply_M(lhs, rhs, app_type);
       }
       else
       {
         // Recurse!
+
+        // Make sure we're looking for the QMG_MATVEC_ORIGINAL
+        if (app_type != QMG_MATVEC_ORIGINAL)
+        {
+          std::cout << "[QMG-ERROR]: In MultigridMG::apply_stencil, the emulated operator must be QMG_MATVEC_ORIGINAL.\n";
+          return; 
+        }
 
         // Check out two temporary vectors.
         complex<double>* pro_rhs = storage_list[i-1]->check_out();
