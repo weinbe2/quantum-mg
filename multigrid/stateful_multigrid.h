@@ -257,6 +257,29 @@ public:
     double coarse_tol = level_info->coarse_tol;
     int coarse_restart = level_info->coarse_restart_freq;
 
+    // Function for what type of fine apply we need to do.
+    // ISSUE: This needs some error checking when the level_info
+    // structure gets built. StatefulMultigridMG really needs to
+    // inherit from MultigridMG...
+    QMGStencilType fine_stencil_type = level_info->fine_stencil_app;
+    matrix_op_cplx apply_fine_M = Stencil2D::get_apply_function(level_info->fine_stencil_app);
+
+    // The fine solve depends on if we're doing a schur solve
+    // or not.
+    int fine_size_solve = fine_size;
+    if (fine_stencil_type == QMG_MATVEC_RIGHT_SCHUR)
+      fine_size_solve /= 2;
+
+    // Function for what type of coarse apply we need to do.
+    QMGStencilType coarse_stencil_type = level_info->coarse_stencil_app;
+    matrix_op_cplx apply_coarse_M = Stencil2D::get_apply_function(level_info->coarse_stencil_app);
+
+    // The fine size depends on if we're doing a schur solve
+    // or not.
+    int coarse_size_solve = coarse_size;
+    if (coarse_stencil_type == QMG_MATVEC_RIGHT_SCHUR)
+      coarse_size_solve /= 2;
+
     // We need a temporary vector for mat-vecs everywhere.
     complex<double>* Atmp = fine_storage->check_out();
 
@@ -264,17 +287,20 @@ public:
     // Solve A z1 = rhs, form new residual r1 = rhs - A z1
     complex<double>* z1 = fine_storage->check_out();
     zero_vector(z1, fine_size);
-    minv_vector_gcr_restart(z1, rhs, fine_size, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_stencil_2D_M, (void*)fine_stencil);
+    minv_vector_gcr_restart(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_fine_M, (void*)fine_stencil);
     zero_vector(Atmp, fine_size);
-    fine_stencil->apply_M(Atmp, z1);
+    fine_stencil->apply_M(Atmp, z1, fine_stencil_type);
     complex<double>* r1 = fine_storage->check_out();
-    caxpbyz(1.0, rhs, -1.0, Atmp, r1, fine_size);
+    caxpbyz(1.0, rhs, -1.0, Atmp, r1, fine_size_solve);
 
-    // Next stop: restrict, recurse (or coarsest solve), prolong.
+    // Next stop: restrict, prep for coarse solve, recurse (or coarsest solve), prolong.
     complex<double>* r_coarse = coarse_storage->check_out();
     zero_vector(r_coarse, coarse_size);
     transfer->restrict_f2c(r1, r_coarse);
     fine_storage->check_in(r1);
+    complex<double>* r_coarse_prep = coarse_storage->check_out();
+    zero_vector(r_coarse_prep, coarse_size);
+    coarse_stencil->prepare_M(r_coarse_prep, r_coarse, coarse_stencil_type);
     complex<double>* e_coarse = coarse_storage->check_out();
     zero_vector(e_coarse, coarse_size);
     if (level == total_num_levels-2) // if we're already on the coarsest level
@@ -282,15 +308,15 @@ public:
       // Do coarsest solve.
       if (coarse_restart == -1)
       {
-        invif = minv_vector_gcr(e_coarse, r_coarse, coarse_size,
+        invif = minv_vector_gcr(e_coarse, r_coarse_prep, coarse_size_solve,
                           coarse_max_iter, coarse_tol, 
-                          apply_stencil_2D_M, (void*)coarse_stencil, &verb2);
+                          apply_coarse_M, (void*)coarse_stencil, &verb2);
       }
       else
       {
-        invif = minv_vector_gcr_restart(e_coarse, r_coarse, coarse_size,
+        invif = minv_vector_gcr_restart(e_coarse, r_coarse_prep, coarse_size_solve,
                           coarse_max_iter, coarse_tol, coarse_restart, 
-                          apply_stencil_2D_M, (void*)coarse_stencil, &verb2);
+                          apply_coarse_M, (void*)coarse_stencil, &verb2);
       }
     }
     else
@@ -300,16 +326,16 @@ public:
       // K cycle
       if (coarse_restart == -1)
       {
-        invif = minv_vector_gcr_var_precond(e_coarse, r_coarse, coarse_size,
+        invif = minv_vector_gcr_var_precond(e_coarse, r_coarse_prep, coarse_size_solve,
                           coarse_max_iter, coarse_tol,
-                          apply_stencil_2D_M, (void*)coarse_stencil,
+                          apply_coarse_M, (void*)coarse_stencil,
                           mg_preconditioner, (void*)stateful_mg_object, &verb2);
       }
       else
       {
-        invif = minv_vector_gcr_var_precond_restart(e_coarse, r_coarse, coarse_size,
+        invif = minv_vector_gcr_var_precond_restart(e_coarse, r_coarse_prep, coarse_size_solve,
                           coarse_max_iter, coarse_tol, coarse_restart,
-                          apply_stencil_2D_M, (void*)coarse_stencil,
+                          apply_coarse_M, (void*)coarse_stencil,
                           mg_preconditioner, (void*)stateful_mg_object, &verb2);
       }
       // V cycle
@@ -317,25 +343,38 @@ public:
       stateful_mg_object->go_finer();
     }
     //cout << "Level " << level << " coarse preconditioner took " << invif.iter << " iterations.\n" << flush;
+    coarse_storage->check_in(r_coarse_prep);
+    complex<double>* e_coarse_reconstruct = coarse_storage->check_out();
+    zero_vector(e_coarse_reconstruct, coarse_size);
+    coarse_stencil->reconstruct_M(e_coarse_reconstruct, e_coarse, r_coarse, coarse_stencil_type);
+
+    /*complex<double>* tmp = coarse_storage->check_out();
+    zero_vector(tmp, coarse_size);
+    coarse_stencil->apply_M(tmp, e_coarse_reconstruct);
+    cout << "Coarse solve level " << level << " has norm2sqdiff " << sqrt(diffnorm2sq(tmp, r_coarse, coarse_size))/sqrt(norm2sq(r_coarse, coarse_size)) << "\n";
+    coarse_storage->check_in(tmp);*/
+    
     coarse_storage->check_in(r_coarse);
+    coarse_storage->check_in(e_coarse);
     complex<double>* z2 = fine_storage->check_out();
     zero_vector(z2, fine_size);
-    transfer->prolong_c2f(e_coarse, z2);
-    coarse_storage->check_in(e_coarse);
-    zero_vector(lhs, fine_size);
-    cxpyz(z1, z2, lhs, fine_size);
+    transfer->prolong_c2f(e_coarse_reconstruct, z2);
+    if (coarse_stencil_type == QMG_MATVEC_RIGHT_SCHUR) { zero_vector(z2 + fine_size/2, fine_size/2); }
+    coarse_storage->check_in(e_coarse_reconstruct);
+    zero_vector(lhs, fine_size_solve);
+    cxpyz(z1, z2, lhs, fine_size_solve);
     fine_storage->check_in(z1);
     fine_storage->check_in(z2);
 
     // Last stop, post smooth. Form r2 = r - A(z1 + z2) = r - Ae, solve A z3 = r2.
     zero_vector(Atmp, fine_size);
-    fine_stencil->apply_M(Atmp, lhs);
+    fine_stencil->apply_M(Atmp, lhs, fine_stencil_type);
     complex<double>* r2 = fine_storage->check_out();
-    caxpbyz(1.0, rhs, -1.0, Atmp, r2, fine_size);
+    caxpbyz(1.0, rhs, -1.0, Atmp, r2, fine_size_solve);
     complex<double>* z3 = fine_storage->check_out();
     zero_vector(z3, fine_size);
-    minv_vector_gcr(z3, r2, fine_size, n_post_smooth, post_smooth_tol, apply_stencil_2D_M, (void*)fine_stencil);
-    cxpy(z3, lhs, fine_size);
+    minv_vector_gcr(z3, r2, fine_size_solve, n_post_smooth, post_smooth_tol, apply_fine_M, (void*)fine_stencil);
+    cxpy(z3, lhs, fine_size_solve);
 
     // Check vectors back in.
     fine_storage->check_in(Atmp);

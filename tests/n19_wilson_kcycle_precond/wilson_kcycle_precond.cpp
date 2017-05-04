@@ -1,6 +1,7 @@
 // Copyright (c) 2017 Evan S Weinberg
 // A test of a K-cycle for the interacting
-// Wilson operator. Generates null vectors using
+// Wilson operator with red-black and schur used
+// at each level. Generates null vectors using
 // BiCGstab-L.
 
 #include <iostream>
@@ -45,8 +46,8 @@ int main(int argc, char** argv)
   std::mt19937 generator (1337u);
 
   // Basic information for fine level.
-  const int x_len = 64;
-  const int y_len = 64;
+  const int x_len = 128;
+  const int y_len = 128;
   const int dof = Wilson2D::get_dof();
 
   // Information on the Wilson operator.
@@ -78,7 +79,7 @@ int main(int argc, char** argv)
   }
 
   // How many times to refine. 
-  const int n_refine = 2; // (64 -> 16 -> 4 -> 1)
+  const int n_refine = 3; // (64 -> 16 -> 4 -> 1)
 
   // Information about the solve.
 
@@ -122,6 +123,9 @@ int main(int argc, char** argv)
       case 64:
         read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l64t64b60_heatbath.dat");
         break;
+      case 128:
+        read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l128t128b60_heatbath.dat");
+        break;
       default:
         std::cout << "[QMG-ERROR]: Invalid lattice size.\n";
         return -1;
@@ -133,8 +137,15 @@ int main(int argc, char** argv)
   // Create a Wilson stencil.
   Wilson2D* wilson_op = new Wilson2D(lats[0], mass, gauge_field);
 
+  // Prepare for rbjacobi solve.
+  wilson_op->build_rbjacobi_stencil();
+
   // Create a MultigridMG object, push top level onto it!
   MultigridMG* mg_object = new MultigridMG(lats[0], wilson_op);
+
+  // What type of stencil should we coarsen?
+  MultigridMG::QMGMultigridPrecondStencil stencil_to_coarsen = MultigridMG::QMG_MULTIGRID_PRECOND_RIGHT_BLOCK_JACOBI;
+  //MultigridMG::QMGMultigridPrecondStencil stencil_to_coarsen = MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL;
 
   // Create coarse lattices, unit null vectors, transfer objects.
   // Push into MultigridMG object. 
@@ -172,6 +183,9 @@ int main(int argc, char** argv)
       // Create coarse_dof null vectors.
       for (j = 0; j < coarse_dof/2; j++)
       {
+        // Update verbosity string.
+        verb.verb_prefix = "Level " + to_string(i) + " Null Vector " + to_string(j) + " ";
+
         // Will become up chiral projection
         null_vectors[j] = allocate_vector<complex<double> >(lats[i-1]->get_size_cv());
         zero_vector(null_vectors[j], lats[i-1]->get_size_cv());
@@ -191,11 +205,12 @@ int main(int argc, char** argv)
 
         // Zero, form residual.
         zero_vector(Arand_guess, lats[i-1]->get_size_cv());
-        mg_object->get_stencil(i-1)->apply_M(Arand_guess, rand_guess);
+        mg_object->get_stencil(i-1)->apply_M(Arand_guess, rand_guess, QMG_MATVEC_RIGHT_JACOBI);
         cax(-1.0, Arand_guess, lats[i-1]->get_size_cv());
 
         // Solve residual equation.
-        minv_vector_bicgstab_l(null_vectors[j], Arand_guess, lats[i-1]->get_size_cv(), 500, 5e-5, 6, apply_stencil_2D_M, (void*)mg_object->get_stencil(i-1), &verb);
+        //minv_vector_bicgstab_l(null_vectors[j], Arand_guess, lats[i-1]->get_size_cv(), 500, 5e-5, 6, apply_stencil_2D_M_rbjacobi, (void*)mg_object->get_stencil(i-1), &verb);
+        minv_vector_gcr_restart(null_vectors[j], Arand_guess, lats[i-1]->get_size_cv(), 500, 5e-5, 64, apply_stencil_2D_M_rbjacobi, (void*)mg_object->get_stencil(i-1), &verb);
 
         // Undo residual equation.
         cxpy(rand_guess, null_vectors[j], lats[i-1]->get_size_cv());
@@ -234,9 +249,10 @@ int main(int argc, char** argv)
     // Arg 2: New transfer object (between new and prev lattice)
     // Arg 3: Should we construct the coarse stencil?
     // Arg 4: Is the operator chiral? (True for Wilson)
-    // Arg 5: What should we construct the coarse stencil from? (Not relevant yet.)
-    // Arg 6: Non-block-orthogonalized null vector.
-    mg_object->push_level(lats[i], transfer_objs[i-1], true, true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
+    // Arg 5: What should we construct the coarse stencil from?
+    // Arg 6: Should we prep dagger or rbjacobi stencil (rbjacobi, for this test)
+    // Arg 7: Non-block-orthogonalized null vector.
+    mg_object->push_level(lats[i], transfer_objs[i-1], true, Wilson2D::has_chirality(), stencil_to_coarsen, CoarseOperator2D::QMG_COARSE_BUILD_RBJACOBI, null_vectors);
 
     // Clean up local vector, since they get copied in.
     for (j = 0; j < coarse_dof; j++)
@@ -257,15 +273,41 @@ int main(int argc, char** argv)
   const double coarse_tol = 0.2;
   const int coarse_restart = 32;
 
+  // What type of solve are we doing?
+  //QMGStencilType solve_type = QMG_MATVEC_ORIGINAL;
+  QMGStencilType solve_type = QMG_MATVEC_RIGHT_SCHUR;
+  matrix_op_cplx apply_stencil_op = Stencil2D::get_apply_function(solve_type);
+  int solve_size = (solve_type == QMG_MATVEC_RIGHT_SCHUR ? lats[0]->get_size_cv()/2 : lats[0]->get_size_cv());
+
+  // Do a sanity check.
+  if (stencil_to_coarsen == MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL)
+  {
+    if (solve_type != QMG_MATVEC_ORIGINAL)
+    {
+      std::cout << "[QMG-ERROR]: Cannot do right jacobi solve without building coarse rbjacobi stencils.\n";
+      return 0;
+    }
+  }
+  else // QMG_MULTIGRID_PRECOND_RIGHT_BLOCK_JACOBI
+  {
+    if (solve_type == QMG_MATVEC_ORIGINAL)
+    {
+      std::cout << "[QMG-ERROR]: Cannot do un-preconditioned solve with the rbjacobi stencils.\n";
+      return 0;
+    }
+  }
+
   // Create the same solver struct on each level.
   StatefulMultigridMG::LevelInfoMG** level_info_objs = new StatefulMultigridMG::LevelInfoMG*[n_refine];
   for (i = 0; i < n_refine; i++)
   {
     level_info_objs[i] = new StatefulMultigridMG::LevelInfoMG();
+    level_info_objs[i]->fine_stencil_app = solve_type;
     level_info_objs[i]->pre_tol = pre_smooth_tol;
     level_info_objs[i]->pre_iters = n_pre_smooth;
     level_info_objs[i]->post_tol = post_smooth_tol;
     level_info_objs[i]->post_iters = n_post_smooth;
+    level_info_objs[i]->coarse_stencil_app = solve_type; 
     level_info_objs[i]->coarse_tol = coarse_tol;
     level_info_objs[i]->coarse_iters = coarse_max_iter;
     level_info_objs[i]->coarse_restart_freq = coarse_restart; 
@@ -313,22 +355,34 @@ int main(int argc, char** argv)
   zero_vector(x, lats[0]->get_size_cv());
   zero_vector(Ax, lats[0]->get_size_cv());
 
+  // Prepare b.
+  complex<double>* b_prep = mg_object->check_out(0);
+  zero_vector(b_prep, lats[0]->get_size_cv());
+  mg_object->get_stencil(0)->prepare_M(b_prep, b, solve_type);
+
   // Run a VPGCR solve!
-  invif = minv_vector_gcr_var_precond_restart(x, b, lats[0]->get_size_cv(),
+  invif = minv_vector_gcr_var_precond_restart(x, b_prep, solve_size,
               max_iter, tol, restart_freq,
-              apply_stencil_2D_M, (void*)mg_object->get_stencil(0),
+              apply_stencil_op, (void*)mg_object->get_stencil(0),
               StatefulMultigridMG::mg_preconditioner, (void*)stateful_mg_object, &verb); 
 
   cout << "Multigrid " << (invif.success ? "converged" : "failed to converge")
           << " in " << invif.iter << " iterations with alleged tolerance "
           << sqrt(invif.resSq)/bnorm << ".\n";
 
+  // Reconstruct x.
+  complex<double>* x_reconstruct = mg_object->check_out(0);
+  zero_vector(x_reconstruct, lats[0]->get_size_cv());
+  mg_object->get_stencil(0)->reconstruct_M(x_reconstruct, x, b, solve_type);
+
   // Check solution.
   zero_vector(Ax, lats[0]->get_size_cv());
-  mg_object->apply_stencil(Ax, x, 0);
+  mg_object->apply_stencil(Ax, x_reconstruct, 0);
   cout << "Check tolerance " << sqrt(diffnorm2sq(b, Ax, lats[0]->get_size_cv()))/bnorm << "\n";
 
   // Check vectors back in.
+  mg_object->check_in(b_prep, 0);
+  mg_object->check_in(x_reconstruct, 0);
   mg_object->check_in(Ax, 0);
   mg_object->check_in(x, 0);
   mg_object->check_in(b, 0);

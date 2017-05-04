@@ -177,6 +177,7 @@ int main(int argc, char** argv)
 
   // Drop a point on the rhs on an even site.
   rhs[lat_wilson->cv_coord_to_index(x_len/2, y_len/2, 0)] = 1.0;
+  rhs[lat_wilson->cv_coord_to_index(x_len/2, y_len/2+1, 0)] = 3.0;
   rhs_norm = sqrt(norm2sq(rhs, cv_size));
 
   // Perform a GCR inversion
@@ -210,6 +211,7 @@ int main(int argc, char** argv)
 
   // Drop a point on the rhs on an even site.
   rhs[lat_wilson->cv_coord_to_index(x_len/2, y_len/2, 0)] = 1.0;
+  rhs[lat_wilson->cv_coord_to_index(x_len/2, y_len/2+1, 0)] = 3.0;
   rhs_norm = sqrt(norm2sq(rhs, cv_size));
 
   // Prepare the lhs.

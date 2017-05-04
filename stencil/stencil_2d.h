@@ -64,6 +64,21 @@ enum QMGStencilType
   QMG_MATVEC_MDAGGER_M = 5, // apply M^dagger M
 };
 
+
+// Special C function wrappers for stencil applications.
+void apply_stencil_2D_M(complex<double>* lhs, complex<double>* rhs, void* extra_data);
+
+void apply_stencil_2D_M_dagger(complex<double>* lhs, complex<double>* rhs, void* extra_data);
+
+void apply_stencil_2D_M_dagger_M(complex<double>* lhs, complex<double>* rhs, void* extra_data);
+
+void apply_stencil_2D_M_M_dagger(complex<double>* lhs, complex<double>* rhs, void* extra_data);
+
+void apply_stencil_2D_M_rbjacobi(complex<double>* lhs, complex<double>* rhs, void* extra_data);
+
+void apply_stencil_2D_M_rbjacobi_schur(complex<double>* lhs, complex<double>* rhs, void* extra_data);
+
+
 struct Stencil2D
 {
 protected:
@@ -1640,7 +1655,7 @@ public:
     cxpay(b, -1.0, b_r, lat->get_size_cv()/2);
 
     // Zero b_o contribution
-    zero_vector(b+lat->get_size_cv()/2, lat->get_size_cv()/2);
+    zero_vector(b_r+lat->get_size_cv()/2, lat->get_size_cv()/2);
   }
 
   // Reconstruct a right block jacobi schur solve.
@@ -1756,6 +1771,36 @@ public:
         break;
       default:
         cout << "[QMG-ERROR]: Tried to call reconstruct_M with invalid stencil type.\n";
+        break;
+    }
+  }
+
+  // Function which maps between QMGStencilType and a function pointer.
+  static matrix_op_cplx get_apply_function(QMGStencilType stencil)
+  {
+    switch (stencil)
+    {
+      case QMG_MATVEC_ORIGINAL:
+        return apply_stencil_2D_M;
+        break;
+      case QMG_MATVEC_DAGGER:
+        return apply_stencil_2D_M_dagger;
+        break;
+      case QMG_MATVEC_RIGHT_JACOBI:
+        return apply_stencil_2D_M_rbjacobi;
+        break;
+      case QMG_MATVEC_RIGHT_SCHUR:
+        return apply_stencil_2D_M_rbjacobi_schur;
+        break;
+      case QMG_MATVEC_M_MDAGGER:
+        return apply_stencil_2D_M_M_dagger;
+        break;
+      case QMG_MATVEC_MDAGGER_M:
+        return apply_stencil_2D_M_dagger_M;
+        break;
+      default:
+        cout << "[QMG-ERROR]: Tried to call get_apply_function with invalid stencil type.\n";
+        return 0;
         break;
     }
   }
