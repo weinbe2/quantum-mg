@@ -53,7 +53,7 @@ using std::vector;
 
 class MultigridMG
 {
-private:
+protected:
   // Get rid of copy, assignment operator.
   MultigridMG(MultigridMG const &);
   MultigridMG& operator=(MultigridMG const &);
