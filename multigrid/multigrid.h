@@ -117,7 +117,7 @@ public:
   }
 
   // Destructor. Clean up!
-  ~MultigridMG()
+  virtual ~MultigridMG()
   {
     int i;
 
@@ -319,6 +319,57 @@ public:
     push_level(new_lat, new_transfer, false, false, QMG_MULTIGRID_PRECOND_ORIGINAL, CoarseOperator2D::QMG_COARSE_BUILD_ORIGINAL, nvecs);
   }
 
+
+  // Pop the coarsest level, cleaning up along the way. 
+  void pop_level()
+  {
+    if (num_levels == 1)
+    {
+      std::cout << "[QMG-ERROR]: In MultigridMG::pop_level, cannot pop when there is only one level.\n";
+      return;
+    }
+
+    int i = num_levels-1;
+
+    // Deallocate vectors.
+    if (storage_list[i] != 0)
+    {
+      delete storage_list[i];
+      storage_list.pop_back();
+    }
+
+    // Clean up stencils that this class created.
+    if (is_stencil_managed[i] && stencil_list[i] != 0)
+    {
+      delete stencil_list[i];
+      stencil_list.pop_back();
+    }
+    is_stencil_managed.pop_back();
+
+    // Safely clean up null vectors.
+    int num_null = lattice_list[i-1]->get_nc();
+    if (global_null_vectors[i-1] != 0)
+    {
+      for (int j = 0; j < num_null; j++)
+      {
+        if (global_null_vectors[i-1][j] != 0)
+        {
+          deallocate_vector(&global_null_vectors[i-1][j]);
+        }
+      }
+      delete[] global_null_vectors[i-1];
+      global_null_vectors.pop_back();
+    }
+
+    // Pop transfer object.
+    transfer_list.pop_back();
+
+    // Pop lattice.
+    lattice_list.pop_back();
+
+    // Reduce number of levels.
+    num_levels--;
+  }
 
 
   // A function that applies the stencil at a given level. Will apply

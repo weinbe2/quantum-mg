@@ -106,7 +106,7 @@ The above explanation is far from perfect. I hope that the below sections will a
 \section{Multigrid class}
 
 
-Header file for a multigrid object, which contains everything (?) needed for a multigrid preconditioner.
+Header file for a multigrid object, \texttt{MultigridMG}, which contains everything (?) needed for a multigrid preconditioner.
 
 MG requires:
 \begin{itemize}
@@ -184,6 +184,8 @@ MG requires:
 \item If we should build the dagger and/or right-block-Jacobi version of the new coarse operator. (Optional, defaults to building neither.)
 \item Copy in the non-block-orthonormalized null vectors used to define the transfer object.
 \end{itemize}
+{\texttt{void pop\_level()}: Removes the current coarsest level, cleaning up along the way. This may be useful for an adaptive multigrid setup.
+~\\~\\~
 {\texttt{void apply\_stencil(complex$<$double$>$* lhs, complex$<$double$>$* rhs, int i, QMGStencilType app\_type = QMG\_MATVEC\_ORIGINAL)}}: Apply the stencil at a given level \texttt{lhs = M rhs}. Will apply the stencil if it exists (and can also apply the dagger, right-block-Jacobi, Schur preconditioned, and normal version of the operator if the appropriate modified stencils have been built). In this case, it wraps the function {\texttt{apply\_stencil}} of the underlying \texttt{Stencil2D} object. If the stencil does not exist, it will apply the emulated prolong-apply fine-restrict operator, recursively if needed.
 ~\\~\\~
 {\texttt{void prolong\_c2f(complex$<$double$>$* coarse\_cv, complex$<$double$>$* fine\_cv, int i)}}: Prolong from a coarse vector at level \texttt{i+1} to a fine vector at level \texttt{i}. Wraps the function {\texttt{prolong\_c2f}} of the underlying \texttt{TransferMG} object.
@@ -197,7 +199,9 @@ MG requires:
 {\texttt{int get\_storage\_number\_allocated(int i)}}: Returns the number of allocated managed arrays at level \texttt{i}. Wraps the function \texttt{get\_storage\_number\_allocated} of the underlying \texttt{ArrayStorageMG}} object.
 ~\\~\\~
 {\texttt{int get\_storage\_number\_checked(int i)}}: Returns the number of checked out managed arrays at level \texttt{i}. Wraps the function \texttt{get\_storage\_number\_checked} of the underlying \texttt{ArrayStorageMG}} object.
+
 \section{Stateful Multigrid Class}
 
+Header file for a stateful multigrid object, \texttt{StatefulMultigridMG}, which inherits from \texttt{MultigridMG} and contains additional functions for \texttt{K}-cycles. This is the next piece that will be documented.
 
 \end{document}

@@ -18,35 +18,45 @@
 #include "multigrid/multigrid.h"
 
 
-// Maybe we want to put this directly into MultigridMG, but for now,
-// this is a wrapper struct that contains MultigridMG as well
-// as the current level.
-class StatefulMultigridMG
+// A class that inherits from MultigridMG, adding extra functions
+// which track the state of an MG solve, as well as what type of 
+// preconditioning to use at each level. 
+class StatefulMultigridMG : public MultigridMG
 {
 private:
   // Get rid of copy, assignment.
   StatefulMultigridMG(StatefulMultigridMG const &);
   StatefulMultigridMG& operator=(StatefulMultigridMG const &);
 
-  // Internal variables.
-  MultigridMG* mg_object;
   int current_level;
 
 public: 
 
-  // Structure that contains information about pre-smooth,
-  // post-smooth, and coarse solve for each level.
-  // Could eventually contain info on what preconditioner
-  // to use, solving with CGNE, etc.
-  // Could also support K cycle, W cycle...
-  // This structure needs to exist for each fine level.
-  struct LevelInfoMG
+  // Structure that contains information about the solve
+  // at a given level: how to perform the outer solve,
+  // as well as the pre-smooth and post-smooth. This
+  // object exists for level except the last, though the
+  // outer solve info is ignored if a given level
+  // is used as the outermost level in a recursive solve.
+  // There is a separate object for the solve of the
+  // coarsest level.
+  struct LevelSolveMG
   {
     /* FINE OP */
 
     // Whether we're using the original, rbjacobi, or schur solve.
-    // Should match the coarse type from the level above.
     QMGStencilType fine_stencil_app;
+
+    /* OUTER SOLVE */
+
+    // Tolerance for outer solve.
+    double intermediate_tol;
+
+    // Maximum number of iterations for outer solve.
+    int intermediate_iters;
+
+    // Restart frequency. -1 means don't restart.
+    int intermediate_restart_freq;
 
     /* PRESMOOTHER */
 
@@ -67,65 +77,68 @@ public:
     // Number of iterations for presmoother
     int post_iters;
 
-    // What solver to use, relaxation params, other params,
-    // preconditioning..
-
-    /* COARSE SOLVE */
-
-    // Whether we're using the original, rbjacobi, schur, CGNE, CGNR solve.
-    // Can only be CGNE or CGNR on the coarsest level, otherwise throw error.
-    QMGStencilType coarse_stencil_app; 
-
-    // Tolerance for coarse solve (for a flexible coarse solver)
-    double coarse_tol;
-
-    // Number of iterations for a coarse solve.
-    int coarse_iters;
-
-    // Restart freq for a coarse solve. -1 means don't restart. 
-    int coarse_restart_freq;
-
     // By default, there's "no" stopping condition.
-    LevelInfoMG()
+    LevelSolveMG()
       : fine_stencil_app(QMG_MATVEC_ORIGINAL), 
+        intermediate_tol(1e-20), intermediate_iters(10000000),
+        intermediate_restart_freq(32),
         pre_tol(1e-20), pre_iters(1000000),
-        post_tol(1e-20), post_iters(1000000),
-        coarse_stencil_app(QMG_MATVEC_ORIGINAL),
-        coarse_tol(1e-20), coarse_iters(1000000),
-        coarse_restart_freq(32)
+        post_tol(1e-20), post_iters(1000000)
     { ; }
 
   };
 
-private:
+  // Structure that describes how to do the coarsest solve.
+  struct CoarsestSolveMG
+  {
+    /* FINE OP */
 
-  // Vector of LevelInfoMG. Should be of length mg_object->get_num_levels()-1.
-  vector<LevelInfoMG*> level_info_list;
+    // Whether we're using the original, rbjacobi, schur,
+    // CGNE, or CGNR solve.
+    QMGStencilType coarsest_stencil_app;
+
+    /* OUTER SOLVE */
+
+    // Tolerance for outer solve.
+    double coarsest_tol;
+
+    // Maximum number of iterations for outer solve.
+    int coarsest_iters;
+
+    // Restart frequency. -1 means don't restart.
+    int coarsest_restart_freq;
+
+    // By default, there's "no" stopping condition.
+    CoarsestSolveMG()
+      : coarsest_stencil_app(QMG_MATVEC_ORIGINAL),
+        coarsest_tol(1e-20), coarsest_iters(100000000),
+        coarsest_restart_freq(32)
+    { ; }
+  };
+
+protected:
+
+  // Vector of LevelSolveMG. Should be of length mg_object->get_num_levels()-1.
+  vector<LevelSolveMG*> level_solve_list;
+
+  // Information on the coarsest level solve.
+  CoarsestSolveMG* coarsest_solve; 
 
 public:
 
   // Simple constructor.
-  StatefulMultigridMG(MultigridMG* mg_object, int current_level = 0)
-    : mg_object(mg_object), current_level(current_level)
+  StatefulMultigridMG(Lattice2D* in_lat, Stencil2D* in_stencil, CoarsestSolveMG* in_coarsest_solve)
+    : MultigridMG(in_lat, in_stencil), coarsest_solve(in_coarsest_solve)
   {
-    // Fill level info structure with nulls.
-    // These need to be set to run an MG solve. 
-    for (int i = 0; i < mg_object->get_num_levels()-1; i++)
-    {
-      level_info_list.push_back(0);
-    }
-  }
 
-  // Get multigrid object
-  MultigridMG* get_multigrid_object()
-  {
-    return mg_object;
+    // Set the current level to zero.
+    current_level = 0;
   }
 
   // Set the multigrid level.
   void set_multigrid_level(int level)
   {
-    if (level >= 0 && level < mg_object->get_num_levels())
+    if (level >= 0 && level < get_num_levels())
     {
       current_level = level;
     }
@@ -151,7 +164,7 @@ public:
   // Go one level coarser.
   void go_coarser()
   {
-    if (current_level < mg_object->get_num_levels()-2)
+    if (current_level < get_num_levels()-2)
     {
       current_level++;
     }
@@ -167,36 +180,107 @@ public:
     return current_level;
   }
 
-  // Set the LevelInfoMG structure for a given fine level.
-  void set_level_info(int i, LevelInfoMG* level_info)
+  // Get the LevelSolveMG structure for a given fine level.
+  LevelSolveMG* get_level_solve(int i)
   {
-    if (i >= 0 && i < mg_object->get_num_levels()-1)
+    if (i >= 0 && i < get_num_levels()-1 && level_solve_list[i] != 0)
     {
-      level_info_list[i] = level_info;
+      return level_solve_list[i];
     }
     else
     {
-      cout << "[QMG-ERROR]: Out of range: LevelInfo level " << i << " does not exist in StatefulMultigridMG object.\n";
-    }
-  }
-
-  // Get the LevelInfoMG structure for a given fine level.
-  LevelInfoMG* get_level_info(int i)
-  {
-    if (i >= 0 && i < mg_object->get_num_levels()-1 && level_info_list[i] != 0)
-    {
-      return level_info_list[i];
-    }
-    else
-    {
-      cout << "[QMG-ERROR]: Out of range: LevelInfo level " << i << " does not exist in StatefulMultigridMG object.\n";
+      cout << "[QMG-ERROR]: Out of range: LevelSolveMG level " << i << " does not exist in StatefulMultigridMG object.\n";
       return 0;
     }
   }
 
-  LevelInfoMG* get_level_info()
+  LevelSolveMG* get_level_solve()
   {
-    return get_level_info(current_level);
+    return get_level_solve(current_level);
+  }
+
+  // Get the CoarsestSolveMG structure.
+  CoarsestSolveMG* get_coarsest_solve()
+  {
+    return coarsest_solve;
+  }
+
+  // Virtual overloads of "push_level" which set the level_solve to a zero pointer...
+  void push_level(Lattice2D* new_lat, TransferMG* new_transfer, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, CoarseOperator2D::QMGCoarseBuildStencil build_extra = CoarseOperator2D::QMG_COARSE_BUILD_ORIGINAL, complex<double>** nvecs = 0)
+  {
+    MultigridMG::push_level(new_lat, new_transfer, build_stencil, is_chiral, build_stencil_from, build_extra, nvecs);
+    level_solve_list.push_back(0); // oiiii
+  }
+
+  void push_level(Lattice2D* new_lat, TransferMG* new_transfer, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, complex<double>** nvecs = 0)
+  {
+    MultigridMG::push_level(new_lat, new_transfer, build_stencil, is_chiral, build_stencil_from, nvecs);
+    level_solve_list.push_back(0); // oiiii
+  }
+
+  void push_level(Lattice2D* new_lat, TransferMG* new_transfer,complex<double>** nvecs)
+  {
+    MultigridMG::push_level(new_lat, new_transfer, nvecs);
+    level_solve_list.push_back(0); // oiiii
+  }
+
+  // Safe versions of push_level which also push a new LevelSolveMG object.
+  // See multigrid.h for the purpose of the other arguments! 
+  void push_level(Lattice2D* new_lat, TransferMG* new_transfer, LevelSolveMG* in_solve, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, CoarseOperator2D::QMGCoarseBuildStencil build_extra = CoarseOperator2D::QMG_COARSE_BUILD_ORIGINAL, complex<double>** nvecs = 0)
+  {
+    MultigridMG::push_level(new_lat, new_transfer, build_stencil, is_chiral, build_stencil_from, build_extra, nvecs);
+
+    // Push the level info. An outer solve can only
+    // be QMG_MATVEC_ORIGINAL, QMG_MATVEC_RIGHT_JACOBI, QMG_MATVEC_RIGHT_SCHUR.
+    if (in_solve->fine_stencil_app != QMG_MATVEC_ORIGINAL &&
+          in_solve->fine_stencil_app != QMG_MATVEC_RIGHT_JACOBI &&
+          in_solve->fine_stencil_app != QMG_MATVEC_RIGHT_JACOBI)
+    {
+      std::cout << "[QMG-ERROR]: In StatefulMultigridMG:;push_level, LevelSolveMG::fine_stencil_app should only be original, right jacobi, or schur.\n";
+    }
+
+    level_solve_list.push_back(in_solve);
+  }
+
+  void push_level(Lattice2D* new_lat, TransferMG* new_transfer, LevelSolveMG* in_solve, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, complex<double>** nvecs = 0)
+  {
+    MultigridMG::push_level(new_lat, new_transfer, build_stencil, is_chiral, build_stencil_from, nvecs);
+
+    // Push the level info. An outer solve can only
+    // be QMG_MATVEC_ORIGINAL, QMG_MATVEC_RIGHT_JACOBI, QMG_MATVEC_RIGHT_SCHUR.
+    if (in_solve->fine_stencil_app != QMG_MATVEC_ORIGINAL &&
+          in_solve->fine_stencil_app != QMG_MATVEC_RIGHT_JACOBI &&
+          in_solve->fine_stencil_app != QMG_MATVEC_RIGHT_JACOBI)
+    {
+      std::cout << "[QMG-ERROR]: In StatefulMultigridMG:;push_level, LevelSolveMG::fine_stencil_app should only be original, right jacobi, or schur.\n";
+    }
+
+    level_solve_list.push_back(in_solve);
+  }
+
+  void push_level(Lattice2D* new_lat, TransferMG* new_transfer, LevelSolveMG* in_solve, complex<double>** nvecs)
+  {
+    MultigridMG::push_level(new_lat, new_transfer, nvecs);
+
+    // Push the level info. An outer solve can only
+    // be QMG_MATVEC_ORIGINAL, QMG_MATVEC_RIGHT_JACOBI, QMG_MATVEC_RIGHT_SCHUR.
+    if (in_solve->fine_stencil_app != QMG_MATVEC_ORIGINAL &&
+          in_solve->fine_stencil_app != QMG_MATVEC_RIGHT_JACOBI &&
+          in_solve->fine_stencil_app != QMG_MATVEC_RIGHT_JACOBI)
+    {
+      std::cout << "[QMG-ERROR]: In StatefulMultigridMG:;push_level, LevelSolveMG::fine_stencil_app should only be original, right jacobi, or schur.\n";
+    }
+
+    level_solve_list.push_back(in_solve);
+  }
+
+  // Overloaded version of pop_level which also pops the level_solve_list.
+  void pop_level()
+  {
+    MultigridMG::pop_level();
+
+    // Pop level solve info.
+    level_solve_list.pop_back();
   }
 
   static void mg_preconditioner(complex<double>* lhs, complex<double>* rhs, int size, void* extra_data, inversion_verbose_struct* verb)
@@ -204,12 +288,9 @@ public:
     // Expose the Multigrid objects.
 
     // State.
-    StatefulMultigridMG* stateful_mg_object = (StatefulMultigridMG*)extra_data;
-    int level = stateful_mg_object->get_multigrid_level();
+    StatefulMultigridMG* mg_object = (StatefulMultigridMG*)extra_data;
+    int level = mg_object->get_multigrid_level();
     //cout << "Entered level " << level << "\n" << flush;
-
-    // MultigridMG.
-    MultigridMG* mg_object = stateful_mg_object->get_multigrid_object();
 
     // Stencils.
     Stencil2D* fine_stencil = mg_object->get_stencil(level);
@@ -246,23 +327,21 @@ public:
       verb2.verb_prefix += "  ";
     verb2.verb_prefix += "[QMG-MG-SOLVE-INFO]: Level " + to_string(level+1) + " ";
 
-    // Get smoothing, coarse solve info structure for current level.
-    LevelInfoMG* level_info = stateful_mg_object->get_level_info();
-
-    int n_pre_smooth = level_info->pre_iters;
-    double pre_smooth_tol = level_info->pre_tol;
-    int n_post_smooth = level_info->post_iters;
-    double post_smooth_tol = level_info->post_tol;
-    int coarse_max_iter = level_info->coarse_iters;
-    double coarse_tol = level_info->coarse_tol;
-    int coarse_restart = level_info->coarse_restart_freq;
+    // Get info on pre- and post-smooth.
+    LevelSolveMG* level_solve = mg_object->get_level_solve();
+    if (level_solve == 0)
+    {
+      std::cout << "[QMG-MG-SOLVE-ERROR]: Level solve for level " << level << " does not exist.\n";
+      return;
+    }
+    int n_pre_smooth = level_solve->pre_iters;
+    double pre_smooth_tol = level_solve->pre_tol;
+    int n_post_smooth = level_solve->post_iters;
+    double post_smooth_tol = level_solve->post_tol;
 
     // Function for what type of fine apply we need to do.
-    // ISSUE: This needs some error checking when the level_info
-    // structure gets built. StatefulMultigridMG really needs to
-    // inherit from MultigridMG...
-    QMGStencilType fine_stencil_type = level_info->fine_stencil_app;
-    matrix_op_cplx apply_fine_M = Stencil2D::get_apply_function(level_info->fine_stencil_app);
+    QMGStencilType fine_stencil_type = level_solve->fine_stencil_app;
+    matrix_op_cplx apply_fine_M = Stencil2D::get_apply_function(level_solve->fine_stencil_app);
 
     // The fine solve depends on if we're doing a schur solve
     // or not.
@@ -270,11 +349,29 @@ public:
     if (fine_stencil_type == QMG_MATVEC_RIGHT_SCHUR)
       fine_size_solve /= 2;
 
+    // Learn about coarse solve.
+    int coarse_max_iter;
+    double coarse_tol;
+    int coarse_restart;
+    QMGStencilType coarse_stencil_type;
+    if (level < total_num_levels-2)
+    {
+      coarse_stencil_type = mg_object->get_level_solve(level+1)->fine_stencil_app;
+      coarse_max_iter = mg_object->get_level_solve(level+1)->intermediate_iters;
+      coarse_tol = mg_object->get_level_solve(level+1)->intermediate_tol;
+      coarse_restart = mg_object->get_level_solve(level+1)->intermediate_restart_freq;
+    }
+    else // coarsest solve.
+    {
+      coarse_stencil_type = mg_object->get_coarsest_solve()->coarsest_stencil_app;
+      coarse_max_iter = mg_object->get_coarsest_solve()->coarsest_iters;
+      coarse_tol = mg_object->get_coarsest_solve()->coarsest_tol;
+      coarse_restart = mg_object->get_coarsest_solve()->coarsest_restart_freq;
+    }
     // Function for what type of coarse apply we need to do.
-    QMGStencilType coarse_stencil_type = level_info->coarse_stencil_app;
-    matrix_op_cplx apply_coarse_M = Stencil2D::get_apply_function(level_info->coarse_stencil_app);
+    matrix_op_cplx apply_coarse_M = Stencil2D::get_apply_function(coarse_stencil_type);
 
-    // The fine size depends on if we're doing a schur solve
+    // The coarse size depends on if we're doing a schur solve
     // or not.
     int coarse_size_solve = coarse_size;
     if (coarse_stencil_type == QMG_MATVEC_RIGHT_SCHUR)
@@ -305,7 +402,6 @@ public:
     zero_vector(e_coarse, coarse_size);
     if (level == total_num_levels-2) // if we're already on the coarsest level
     {
-      // Do coarsest solve.
       if (coarse_restart == -1)
       {
         invif = minv_vector_gcr(e_coarse, r_coarse_prep, coarse_size_solve,
@@ -322,25 +418,25 @@ public:
     else
     {
       // Recurse.
-      stateful_mg_object->go_coarser();
+      mg_object->go_coarser();
       // K cycle
       if (coarse_restart == -1)
       {
         invif = minv_vector_gcr_var_precond(e_coarse, r_coarse_prep, coarse_size_solve,
                           coarse_max_iter, coarse_tol,
                           apply_coarse_M, (void*)coarse_stencil,
-                          mg_preconditioner, (void*)stateful_mg_object, &verb2);
+                          mg_preconditioner, (void*)mg_object, &verb2);
       }
       else
       {
         invif = minv_vector_gcr_var_precond_restart(e_coarse, r_coarse_prep, coarse_size_solve,
                           coarse_max_iter, coarse_tol, coarse_restart,
                           apply_coarse_M, (void*)coarse_stencil,
-                          mg_preconditioner, (void*)stateful_mg_object, &verb2);
+                          mg_preconditioner, (void*)mg_object, &verb2);
       }
       // V cycle
       //mg_preconditioner(e_coarse, r_coarse, coarse_size, (void*)stateful_mg_object);
-      stateful_mg_object->go_finer();
+      mg_object->go_finer();
     }
     //cout << "Level " << level << " coarse preconditioner took " << invif.iter << " iterations.\n" << flush;
     coarse_storage->check_in(r_coarse_prep);

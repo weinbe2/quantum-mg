@@ -126,7 +126,6 @@ int main(int argc, char** argv)
   // smoother and coarse solver is used on every level. There's 
   // support for changing it on each level, we're just keeping it simple here.
   // Some things (such as what solver we use) ARE currently hard coded.
-  // There's currently no preconditioning anywhere. Eventually it'll be a flag.
 
   // Pre-smoother: GCR(2)
   const int n_pre_smooth = 2;
@@ -136,10 +135,15 @@ int main(int argc, char** argv)
   const int n_post_smooth = 2;
   const double post_smooth_tol = 1e-15; // Force # iterations to be the stopping cond.
 
-  // Coarse solver: GCR(32)
-  const int coarse_max_iter = 1000000; // never
-  const double coarse_tol = 0.2; // Force tolerance to be stopping condition.
-  const int coarse_restart = 32;
+  // Intermediate solver: GCR(32)
+  const int inner_max_iter = 1000000; // never
+  const double inner_tol = 0.2; // Force tolerance to be stopping condition.
+  const int inner_restart = 32;
+
+  // Coarsest solve
+  const double coarsest_tol = 0.2;
+  const int coarsest_max_iter = 1000;
+  const int coarsest_restart_freq = 32;
 
   //////////////////////////
   // INITIAL GAUGE FIELDS //
@@ -210,31 +214,25 @@ int main(int argc, char** argv)
   for (i = 0; i < n_refine; i++)
     transfer_objs[i] = 0;
 
-  // Container object: holds all transfer objects, exposes operators,
-  // builds coarse stencils, maintains managed memory...
-  MultigridMG* mg_object = 0;
-
-  // Stateful MG object: Contains a MultigridMG object, then additional
+  // Stateful MG object: holds all transfer objects, exposes operators,
+  // builds coarse stencils, maintains managed memory. It also includes all
   // variables for an MG solve, such as which level we're currently solving.
-  // A "smarter" design choice would be for the stateful object to inherit
-  // from MultigridMG itself, but that's a future problem.
-  StatefulMultigridMG* stateful_mg_object = 0;
+  StatefulMultigridMG* mg_object = 0;
 
   // Structure which contains the smoothing and coarse solve
-  // parameters on each level. Since we've hard coded this to be
-  // the same for each level, we'll actually build this here.
-  StatefulMultigridMG::LevelInfoMG** level_info_objs = new StatefulMultigridMG::LevelInfoMG*[n_refine];
-  for (i = 0; i < n_refine; i++)
-  {
-    level_info_objs[i] = new StatefulMultigridMG::LevelInfoMG();
-    level_info_objs[i]->pre_tol = pre_smooth_tol;
-    level_info_objs[i]->pre_iters = n_pre_smooth;
-    level_info_objs[i]->post_tol = post_smooth_tol;
-    level_info_objs[i]->post_iters = n_post_smooth;
-    level_info_objs[i]->coarse_tol = coarse_tol;
-    level_info_objs[i]->coarse_iters = coarse_max_iter;
-    level_info_objs[i]->coarse_restart_freq = coarse_restart; 
-  }
+  // parameters on each level. Even though we've hard-coded
+  // this to be the same on each level, we'll define it
+  // inline below. 
+  StatefulMultigridMG::LevelSolveMG** level_solve_objs = new StatefulMultigridMG::LevelSolveMG*[n_refine];
+
+  // Structure which defines the coarsest solve. This is separate from
+  // level_solve_objs in case, for example, you want to do the
+  // lowest level solve with the normal equation.
+  StatefulMultigridMG::CoarsestSolveMG* coarsest_solve_obj = new StatefulMultigridMG::CoarsestSolveMG;
+  coarsest_solve_obj->coarsest_stencil_app = QMG_MATVEC_ORIGINAL;
+  coarsest_solve_obj->coarsest_tol = coarsest_tol;
+  coarsest_solve_obj->coarsest_iters = coarsest_max_iter;
+  coarsest_solve_obj->coarsest_restart_freq = coarsest_restart_freq;
 
   ////////////////////////////
   // CREATE FERMION VECTORS //
@@ -316,7 +314,7 @@ int main(int argc, char** argv)
       cout << "[QMG-MG]: Building coarse operator\n";
 
       // Create a fresh MultigridMG object, push the top level on it.
-      mg_object = new MultigridMG(lats[0], wilson);
+      mg_object = new StatefulMultigridMG(lats[0], wilson, coarsest_solve_obj);
 
       // Generate null vectors, build coarse operator
       // on each level. 
@@ -408,21 +406,37 @@ int main(int argc, char** argv)
         transfer_objs[fine_idx] = new TransferMG(lats[fine_idx], lats[coarse_idx],
                                     null_vectors, true);
 
+        // Fill a new LevelSolveMG object for the new level.
+        // This defines how an outer solve is done with level 'fine_idx',
+        // as well as how it's used to smooth.
+        // When fine_idx is 0, the intermediate values are ignored,
+        // and are instead defered to when the inverse is called.
+        level_solve_objs[fine_idx] = new StatefulMultigridMG::LevelSolveMG;
+        level_solve_objs[fine_idx]->fine_stencil_app = QMG_MATVEC_ORIGINAL;
+        level_solve_objs[fine_idx]->intermediate_tol = inner_tol;
+        level_solve_objs[fine_idx]->intermediate_iters = inner_max_iter;
+        level_solve_objs[fine_idx]->intermediate_restart_freq = inner_restart;
+        level_solve_objs[fine_idx]->pre_tol = pre_smooth_tol;
+        level_solve_objs[fine_idx]->pre_iters = n_pre_smooth;
+        level_solve_objs[fine_idx]->post_tol = post_smooth_tol;
+        level_solve_objs[fine_idx]->post_iters = n_post_smooth;
+
         // Push a new level on the multigrid object! 
         // Arg 1: Coarse lattice
         // Arg 2: New transfer object (between new and prev lattice)
-        // Arg 3: Should we construct the coarse stencil?
+        // Arg 3: New LevelSolve object, describing outer solves and smooths.
+        // Arg 4: Should we construct the coarse stencil?
         //          At some point, we'll support loading/saving coarse stencils.
         //          For now, this should always be true.
-        // Arg 4: Is the operator chiral? (True for Wilson)
-        // Arg 5: What should we construct the coarse stencil from?
+        // Arg 5: Is the operator chiral? (True for Wilson)
+        // Arg 6: What should we construct the coarse stencil from?
         //          At some point, we'll support coarsening 
         //          block preconditioned operators. 
-        // Arg 6: Optionally store non-block-orthonormalized null vectors.
+        // Arg 7: Optionally store non-block-orthonormalized null vectors.
         //          We don't need this for now, but it could be useful
         //          if we wanted to store null vectors and refine them
         //          as the gauge field evolves.
-        mg_object->push_level(lats[coarse_idx], transfer_objs[fine_idx], true,
+        mg_object->push_level(lats[coarse_idx], transfer_objs[fine_idx], level_solve_objs[fine_idx], true,
           true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
 
         // The transfer object and multigrid object create their own
@@ -431,13 +445,6 @@ int main(int argc, char** argv)
           deallocate_vector(&null_vectors[j]);
         delete[] null_vectors;
       }
-
-      // Allocate the stateful multigrid object, populate
-      // with information on how to smooth and coarse solve
-      // on each level.
-      stateful_mg_object = new StatefulMultigridMG(mg_object);
-      for (i = 0; i < n_refine; i++)
-        stateful_mg_object->set_level_info(i, level_info_objs[i]);
 
       ///////////////////////
       // PERFORM INVERSION //
@@ -459,7 +466,7 @@ int main(int argc, char** argv)
       invif = minv_vector_gcr_var_precond_restart(prop, src, lats[0]->get_size_cv(),
               max_iter, tol, restart_freq,
               apply_stencil_2D_M, (void*)mg_object->get_stencil(0),
-              StatefulMultigridMG::mg_preconditioner, (void*)stateful_mg_object, verb); 
+              StatefulMultigridMG::mg_preconditioner, (void*)mg_object, verb); 
 
       // Compute the norm2sq, update into accumulator.
       norm2sq_cv_timeslice(pion_up, prop, lats[0]);
@@ -484,7 +491,7 @@ int main(int argc, char** argv)
       invif = minv_vector_gcr_var_precond_restart(prop, src, lats[0]->get_size_cv(),
               max_iter, tol, restart_freq,
               apply_stencil_2D_M, (void*)mg_object->get_stencil(0),
-              StatefulMultigridMG::mg_preconditioner, (void*)stateful_mg_object, verb); 
+              StatefulMultigridMG::mg_preconditioner, (void*)mg_object, verb); 
 
       // Compute the norm2sq, update into accumulator.
       norm2sq_cv_timeslice(pion_down, prop, lats[0]);
@@ -519,8 +526,11 @@ int main(int argc, char** argv)
       // the solver could be a good preconditioner for multiple
       // updates... not likely with heatbath. 
 
-      delete stateful_mg_object; stateful_mg_object = 0;
       delete mg_object; mg_object = 0;
+      for (i = 0; i < n_refine-1; i++)
+      {
+        delete level_solve_objs[i]; level_solve_objs[i] = 0;
+      }
       for (i = 0; i < n_refine; i++)
       {
         delete transfer_objs[i]; transfer_objs[i] = 0;
@@ -556,13 +566,11 @@ int main(int argc, char** argv)
   delete verb; 
   delete null_verb; 
 
+  // Delete coarse solve object.
+  delete coarsest_solve_obj;
 
-  // Delete level info objects.
-  for (i = 0; i < n_refine; i++)
-  {
-    delete level_info_objs[i];
-  }
-  delete[] level_info_objs;
+  // Delete storage for level solve objects.
+  delete[] level_solve_objs;
   
   // Delete storage for transfer objects.
   delete[] transfer_objs;

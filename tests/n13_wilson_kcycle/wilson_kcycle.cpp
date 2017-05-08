@@ -80,16 +80,26 @@ int main(int argc, char** argv)
   // How many times to refine. 
   const int n_refine = 2; // (64 -> 16 -> 4 -> 1)
 
-  // Information about the solve.
-
-  // Solver tolerance.
+  // Information about the outermost solve.
   const double tol = 1e-8; 
-
-  // Maximum iterations.
   const int max_iter = 1000;
-
-  // Restart frequency
   const int restart_freq = 32;
+
+  // Information about intermediate solves.
+  const double inner_tol = 0.2;
+  const int inner_max_iter = 1000;
+  const int inner_restart_freq = 32;
+
+  // Information about pre- and post-smooths. 
+  const int n_pre_smooth = 2;
+  const double pre_smooth_tol = 1e-15; // never
+  const int n_post_smooth = 2;
+  const double post_smooth_tol = 1e-15; // never
+
+  // Information about the coarsest solve.
+  const double coarsest_tol = 0.2;
+  const int coarsest_max_iter = 1000;
+  const int coarsest_restart_freq = 32;
 
   // Somewhere to solve inversion info.
   inversion_info invif;
@@ -133,8 +143,18 @@ int main(int argc, char** argv)
   // Create a Wilson stencil.
   Wilson2D* wilson_op = new Wilson2D(lats[0], mass, gauge_field);
 
+  // Prepare level solve objects for the top level.
+  StatefulMultigridMG::LevelSolveMG** level_solve_objs = new StatefulMultigridMG::LevelSolveMG*[n_refine];
+
+  // Prepare coarsest solve object for the coarsest level.
+  StatefulMultigridMG::CoarsestSolveMG* coarsest_solve_obj = new StatefulMultigridMG::CoarsestSolveMG;
+  coarsest_solve_obj->coarsest_stencil_app = QMG_MATVEC_ORIGINAL;
+  coarsest_solve_obj->coarsest_tol = coarsest_tol;
+  coarsest_solve_obj->coarsest_iters = coarsest_max_iter;
+  coarsest_solve_obj->coarsest_restart_freq = coarsest_restart_freq;
+
   // Create a MultigridMG object, push top level onto it!
-  MultigridMG* mg_object = new MultigridMG(lats[0], wilson_op);
+  StatefulMultigridMG* mg_object = new StatefulMultigridMG(lats[0], wilson_op, coarsest_solve_obj);
 
   // Create coarse lattices, unit null vectors, transfer objects.
   // Push into MultigridMG object. 
@@ -229,48 +249,31 @@ int main(int argc, char** argv)
     // Fine lattice, coarse lattice, null vector(s), perform the block ortho.
     transfer_objs[i-1] = new TransferMG(lats[i-1], lats[i], null_vectors, true);
 
+    // Prepare a new LevelSolveMG object for the new level.
+    level_solve_objs[i-1] = new StatefulMultigridMG::LevelSolveMG;
+    level_solve_objs[i-1]->fine_stencil_app = QMG_MATVEC_ORIGINAL;
+    level_solve_objs[i-1]->intermediate_tol = inner_tol;
+    level_solve_objs[i-1]->intermediate_iters = inner_max_iter;
+    level_solve_objs[i-1]->intermediate_restart_freq = inner_restart_freq;
+    level_solve_objs[i-1]->pre_tol = pre_smooth_tol;
+    level_solve_objs[i-1]->pre_iters = n_pre_smooth;
+    level_solve_objs[i-1]->post_tol = post_smooth_tol;
+    level_solve_objs[i-1]->post_iters = n_post_smooth;
+
     // Push a new level on the multigrid object! Also, save the global null vector.
     // Arg 1: New lattice
     // Arg 2: New transfer object (between new and prev lattice)
+    // Arg 3: Level solve object (specifies how to do intermediate solves and smooths)
     // Arg 3: Should we construct the coarse stencil?
     // Arg 4: Is the operator chiral? (True for Wilson)
     // Arg 5: What should we construct the coarse stencil from? (Not relevant yet.)
     // Arg 6: Non-block-orthogonalized null vector.
-    mg_object->push_level(lats[i], transfer_objs[i-1], true, true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
+    mg_object->push_level(lats[i], transfer_objs[i-1], level_solve_objs[i-1], true, true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
 
     // Clean up local vector, since they get copied in.
     for (j = 0; j < coarse_dof; j++)
       deallocate_vector(&null_vectors[j]);
     delete[] null_vectors;
-  }
-
-  // Create a StatefulMultigridMG. The multigrid solver uses this because
-  // it has some extra functions to track a recursive MG solve.
-  StatefulMultigridMG* stateful_mg_object = new StatefulMultigridMG(mg_object);
-
-  // Use the same solver info on each level.
-  const int n_pre_smooth = 2;
-  const double pre_smooth_tol = 1e-15; // never
-  const int n_post_smooth = 2;
-  const double post_smooth_tol = 1e-15; // never
-  const int coarse_max_iter = 1000000; // never
-  const double coarse_tol = 0.2;
-  const int coarse_restart = 32;
-
-  // Create the same solver struct on each level.
-  StatefulMultigridMG::LevelInfoMG** level_info_objs = new StatefulMultigridMG::LevelInfoMG*[n_refine];
-  for (i = 0; i < n_refine; i++)
-  {
-    level_info_objs[i] = new StatefulMultigridMG::LevelInfoMG();
-    level_info_objs[i]->pre_tol = pre_smooth_tol;
-    level_info_objs[i]->pre_iters = n_pre_smooth;
-    level_info_objs[i]->post_tol = post_smooth_tol;
-    level_info_objs[i]->post_iters = n_post_smooth;
-    level_info_objs[i]->coarse_tol = coarse_tol;
-    level_info_objs[i]->coarse_iters = coarse_max_iter;
-    level_info_objs[i]->coarse_restart_freq = coarse_restart; 
-    // FILL IN VALUES
-    stateful_mg_object->set_level_info(i, level_info_objs[i]);
   }
 
   // Prepare storage and a guess right hand side.
@@ -317,7 +320,7 @@ int main(int argc, char** argv)
   invif = minv_vector_gcr_var_precond_restart(x, b, lats[0]->get_size_cv(),
               max_iter, tol, restart_freq,
               apply_stencil_2D_M, (void*)mg_object->get_stencil(0),
-              StatefulMultigridMG::mg_preconditioner, (void*)stateful_mg_object, &verb); 
+              StatefulMultigridMG::mg_preconditioner, (void*)mg_object, &verb); 
 
   cout << "Multigrid " << (invif.success ? "converged" : "failed to converge")
           << " in " << invif.iter << " iterations with alleged tolerance "
@@ -339,16 +342,6 @@ int main(int argc, char** argv)
 
   deallocate_vector(&gauge_field);
 
-  // Delete level info objects.
-  for (i = 0; i < n_refine; i++)
-  {
-    delete level_info_objs[i];
-  }
-  delete[] level_info_objs;
-
-  // Delete StatefulMultigridMG.
-  delete stateful_mg_object;
-
   // Delete MultigridMG.
   delete mg_object;
 
@@ -361,6 +354,16 @@ int main(int argc, char** argv)
 
   // Delete stencil.
   delete wilson_op;
+
+  // Delete coarsest solve objects.
+  delete coarsest_solve_obj;
+
+  // Delete level solve objects.
+  for (i = 0; i < n_refine; i++)
+  {
+    delete level_solve_objs[i];
+  }
+  delete[] level_solve_objs;
 
   // Delete lattices.
   for (i = 0; i <= n_refine; i++)
