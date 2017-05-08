@@ -1,0 +1,111 @@
+\documentclass[pdftex,letterpaper,10pt]{article}
+\usepackage[pdftex]{color, graphicx}
+\usepackage{verbatim,amsmath, amssymb, booktabs}
+\usepackage{listings}
+\usepackage{multirow} 
+\usepackage{multicol}
+\usepackage{float}
+\usepackage[font=footnotesize,labelfont=bf,labelsep=period]{caption}
+\usepackage[colorlinks=true, linkcolor=blue, filecolor=blue, urlcolor=blue, citecolor=blue, pdftex=true, plainpages=false]{hyperref}
+\usepackage{subcaption}
+\usepackage{comment}
+
+\newcommand{\red}[1]{\textcolor{red}{#1}}
+\newcommand{\blue}[1]{\textcolor{blue}{#1}}
+
+\newcommand{\qmg}{{\textbf{Quantum MG}}~}
+
+\definecolor{gray}{rgb}{0.4,0.4,0.4}
+\definecolor{lightred}{rgb}{1.0,0.24,0.24}
+\definecolor{darkred}{rgb}{0.5,0.0,0.0}
+\definecolor{darkblue}{rgb}{0.0,0.0,0.6}
+\definecolor{darkgreen}{rgb}{0.0,0.39,0.0}
+\definecolor{cyan}{rgb}{0.0,0.6,0.6}
+\definecolor{purple}{rgb}{0.5,0.0,0.4}
+\newcommand{\green}[1]{\textcolor{darkgreen}{#1}}
+\newcommand{\purple}[1]{\textcolor{purple}{#1}}
+\addtolength{\oddsidemargin}{-.875in}
+\addtolength{\evensidemargin}{-.875in}
+\addtolength{\textwidth}{1.75in}
+
+\addtolength{\topmargin}{-.875in}
+\addtolength{\textheight}{1.75in}
+
+\setcounter{secnumdepth}{5}
+
+
+\setcounter{tocdepth}{4}
+
+\begin{document}
+
+\title{Quantum-MG Documentation}
+\author{Evan Weinberg\\weinbe2@bu.edu}
+\date{\today}
+\maketitle
+
+\tableofcontents
+
+\section{Disclaimer}
+
+Disclaimer: This documentation is far from complete, far from perfect, and is largely put together on the fly. I hope to make it more complete as time goes on, but for now, take it for what it is, and ask me to add a section if you want it quickly! I'll be more than happy to oblige and do my best to help as quickly as possible. 
+
+\section{Dependencies}
+
+The \qmg headers only depend on the {\textbf{Quantum Linear Algebra}} headers, which are accessible at \url{https://github.com/weinbe2/quantum-linalg}. 
+
+\section{Philosophy}
+
+The design philosophy of \qmg is to provide a full stack to test algorithms on regular lattices as easily as possible. This has two design consequences:
+
+\begin{itemize}
+\item Everything is included in a C++ {\emph{header}} file: there is no need to link a library or write complicated {\texttt{makefile}}s to integrate pieces of QMG. The only penalty to this is it adds to compile time, but not in any unreasonable way (at least in my opinion).
+\item There is a minimum amount of optimization in the library from data layout up. The one exception to this is keeping ``even'' and ``odd'' sites in contiguous blocks of memory. This simplifies even-odd preconditioning to the point that it's worth (again, at least in my opinion) the extra complexity in terms of data layout. 
+\end{itemize}
+
+The benefit of the simplicity is that it should be easy to test new ideas using the components that have been pre-written. If there's a lower-level component that someone wants, but is not currently there, it's also decently straightforward to modify low level pieces to add that funcitonality. If it's not easy, or at least straightforward, then I haven't succeeded in my design philosophy, and you should let me know.
+
+In my opinion, I have identified a base set of objects that are necessary for this algorithm framework as follows:
+
+\begin{itemize}
+\item ``Lattice'' object: knows about the lattice dimensions, degrees-of-freedom per site, routines to convert between array indices and coordinates. This hides everything about the data layout.
+\item ``Cshift'' functions, built on the ``Lattice'' object. Performs any type of shift in any direction (forward and backwards). This, again, is made to hide data layout.
+\item ``Stencil'' class, built on the ``Lattice'' object and the ``cshift'' functions. This supports a generic up-to-distance-1 stencil (distance-2 stencil is in the pipeline). This has routines to apply the full stencil, the even-odd or odd-even piece only, and other custom versions. This also supports routines to generate and apply the dagger of the stencil, as well as the right-block-Jacobi and Schur preconditioned operators.
+\item Reference operator implementations, inherits from the ``Stencil'' class. There are currently implementations for the gauged Laplacian, gauged Wilson, and gauged Staggered operator. I plan on adding the $\gamma_5$ Hermitian versions of the Wilson operator and the Domain wall operator.
+\item $U(1)$ gauge functions, built on the ``Lattice'' object and the ``cshift'' functions. This includes a non-compact heatbath routine. This is specifically to support studies of the 2D Schwinger model.
+\item ``Transfer'' object for managing the transfer between fine and coarse lattices. This object takes in null vectors, performs block orthonormalization, and provides a ``prolong'' and ``restrict'' function. It is currently constrained to use the same prolongator and restrictor, but that should change soon.
+\item ``Coarse stencil'' class, which inherits from the ``Stencil'' class. This takes in a ``Stencil'' class from the fine level and a ``Transfer'' object and explicitly constructs the coarse operator. It also can preserve a sense of ``chirality''. 
+\item ``Memory Management'' class. This object provides a ``check-out'' and ``check-in'' routine to get an array of a known size. This is meant to avoid more allocations and deallocations than necessary and provides garbage collection on the arrays checked in and checked out.
+\item ``Multigrid'' class, which takes in an initial fine ``Lattice'' and ``Stencil''. This provides a ``push\_level'' function which takes in a coarser ``Lattice'' and ``Transfer'' objects, forms a new ``Coarse Stencil'' internally, and provides routines to apply a stencil, a prolongator, and a restrictor at any level for convenience. It also contains a ``Memory Management'' class at each level.
+\item ``StatefulMultigrid'' class, inherits from the ``Multigrid'' class. This maintains the state of a multigrid solve, provides a {\texttt{static}} function to apply a recursive K-cycle, and contains information on what to use and how to apply a pre-smoother, post-smoother, and recursive coarse solve. 
+\end{itemize}
+
+The above explanation is far from perfect. I hope that the below sections will add some clarification as appropriate.
+
+\section{Lattice object}
+
+\section{Cshift functions}
+
+\section{Stencil class}
+
+\section{Pre-existing Stencils}
+
+\subsection{Gauged Laplacian}
+
+\subsection{Gauged Wilson}
+
+\subsection{Gauged Staggered}
+
+\section{$U(1)$ functions}
+
+\section{Transfer object}
+
+\section{Coarse stencil}
+
+\section{Memory Manager}
+
+\section{Multigrid class}
+
+\section{Stateful Multigrid Class}
+
+
+\end{document}
