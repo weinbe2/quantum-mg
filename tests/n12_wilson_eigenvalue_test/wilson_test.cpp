@@ -27,8 +27,8 @@ int main(int argc, char** argv)
   // Iterators and such.
 
   // Basic information.
-  const int x_len = 64;
-  const int y_len = 64;
+  const int x_len = 32;
+  const int y_len = 32;
   const int dof = 2;
 
   // Staggered specific information.

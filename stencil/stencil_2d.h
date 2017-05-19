@@ -12,6 +12,12 @@
 #include "blas/generic_matrix.h"
 #include "../cshift/cshift_2d.h"
 
+#ifndef QLINALG_FCN_POINTER
+#define QLINALG_FCN_POINTER
+typedef void (*matrix_op_real)(double*,double*,void*);
+typedef void (*matrix_op_cplx)(complex<double>*,complex<double>*,void*);
+#endif
+
 // Indexing offset of, for ex, XP1, is
 // lat->get_size_cm() * QMG_DIR_INDEX_XP1.
 // Helpful for accessing certain sub-directions
@@ -1570,9 +1576,25 @@ public:
       return;
     }
 
-    perform_swap_rbjacobi();
-    apply_M(lhs, rhs);
-    perform_swap_rbjacobi();
+    apply_M_rbjacobi_clover(lhs, rhs);
+
+    if (hopping != 0)
+    {
+      apply_M_rbjacobi_eo(lhs, rhs);
+      apply_M_rbjacobi_oe(lhs, rhs);
+    }
+
+    if (twolink != 0)
+    {
+      cout << "[QMG-WARNING]: two link stencil not yet supported.\n";
+    }
+
+    if (corner != 0)
+    {
+      cout << "[QMG-WARNING]: corner stencil not yet supported.\n";
+    }
+
+    apply_M_rbjacobi_shift(lhs, rhs);
   }
 
   // Special for the right block jacobi, apply the clover inverse.
@@ -1864,6 +1886,7 @@ void apply_stencil_2D_M_rbjacobi(complex<double>* lhs, complex<double>* rhs, voi
     std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_rbjacobi, but the rbjacobi stencil has not been built.\n";
     return;
   }
+  zero_vector(lhs, stenc->lat->get_size_cv());
   stenc->apply_M_rbjacobi(lhs, rhs); // lhs = M rhs
 }
 
@@ -1876,6 +1899,7 @@ void apply_stencil_2D_M_rbjacobi_cinv(complex<double>* lhs, complex<double>* rhs
     std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_rbjacobi_cinv, but the rbjacobi stencil has not been built.\n";
     return;
   }
+  zero_vector(lhs, stenc->lat->get_size_cv());
   stenc->apply_M_rbjacobi_cinv(lhs, rhs); // lhs = M rhs
 }
 
@@ -1887,6 +1911,7 @@ void apply_stencil_2D_M_rbjacobi_schur(complex<double>* lhs, complex<double>* rh
     std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_rbjacobi_schur, but the rbjacobi stencil has not been built.\n";
     return;
   }
+  zero_vector(lhs, stenc->lat->get_size_cv()/2);
   stenc->apply_M_rbjacobi_schur(lhs, rhs); // lhs = M rhs
 }
 

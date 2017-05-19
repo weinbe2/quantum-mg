@@ -234,7 +234,7 @@ public:
     // be QMG_MATVEC_ORIGINAL, QMG_MATVEC_RIGHT_JACOBI, QMG_MATVEC_RIGHT_SCHUR.
     if (in_solve->fine_stencil_app != QMG_MATVEC_ORIGINAL &&
           in_solve->fine_stencil_app != QMG_MATVEC_RIGHT_JACOBI &&
-          in_solve->fine_stencil_app != QMG_MATVEC_RIGHT_JACOBI)
+          in_solve->fine_stencil_app != QMG_MATVEC_RIGHT_SCHUR)
     {
       std::cout << "[QMG-ERROR]: In StatefulMultigridMG:;push_level, LevelSolveMG::fine_stencil_app should only be original, right jacobi, or schur.\n";
     }

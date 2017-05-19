@@ -118,7 +118,7 @@ public:
   // Staggered has a sense of chirality.
   static chirality_state has_chirality()
   {
-    return QMG_CHIRAL_TRUE; 
+    return QMG_CHIRAL_YES; 
   }
 
   // Chirality is even/odd. 
@@ -136,7 +136,7 @@ public:
     if (is_up)
     {
       zero_vector(dest+lat->get_size_cv()/2, lat->get_size_cv()/2);
-      copy_vector(dest, orig2, lat->get_size_cv()/2);
+      copy_vector(dest, orig, lat->get_size_cv()/2);
     }
     else
     {
