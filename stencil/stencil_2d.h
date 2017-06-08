@@ -1709,6 +1709,32 @@ public:
     apply_M_rbjacobi_cinv(x, eo_cvector);
   }
 
+  // Reconstruct a right block jacobi schur solve to a rbjacobi solve.
+  // x_e = y_e, x_o = (b_o - D_{oe} D^{-1}_{ee} y_e)
+  void reconstruct_M_rbjacobi_schur_to_rbjacobi(complex<double>* x, complex<double>* y_e, complex<double>* b)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_rbjacobi_schur_to_rbjacobi, but the rbjacobi stencil has not been allocated.\n";
+      return;
+    }
+
+    // Allocate if needed, zero the temporary vector. 
+    if (eo_cvector == 0) { eo_cvector = allocate_vector<complex<double>>(lat->get_size_cv()); }
+    zero_vector(eo_cvector, lat->get_size_cv()/2); 
+
+    // We'll form x_o first, since x_e is easy.
+
+    // Apply D_{oe} D^{-1}_{ee} y_e
+    apply_M_rbjacobi_oe(eo_cvector, y_e);
+
+    // Form b_o - D_{oe} D^{-1}_ee y_e
+    cxpay(b+lat->get_size_cv()/2, -1.0, x+lat->get_size_cv()/2, lat->get_size_cv()/2);
+
+    // Copy y_e into eo_cvector so we can do the cinv in one pass.
+    copy_vector(x, y_e, lat->get_size_cv()/2);
+  }
+
   //////////////////////////
   // CONVENIENT FUNCTIONS //
   //////////////////////////
