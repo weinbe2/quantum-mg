@@ -104,6 +104,22 @@ public:
     conj_vector(priv_cmatrix, cm_size);
     caxpy(0.5, priv_cmatrix, hopping + 3*cm_size, cm_size);
     arb_local_function_vector(hopping + 3*cm_size, staggered_set_eta_y, (void*)lat, cm_size);
+
+    // Kill rbjacobi, dagger links if they exist.
+    if (built_dagger)
+    {
+      deallocate_vector(&dagger_clover);
+      deallocate_vector(&dagger_hopping);
+      built_dagger = false;
+    }
+
+    if (built_rbjacobi)
+    {
+      deallocate_vector(&rbjacobi_cinv);
+      deallocate_vector(&rbjacobi_clover);
+      deallocate_vector(&rbjacobi_hopping);
+      built_rbjacobi = false;
+    }
   }
 
 public:

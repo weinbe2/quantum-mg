@@ -31,7 +31,7 @@ int main(int argc, char** argv)
 
   // How many updates to do between measurements
   int n_update = 100;
-  int n_therm = 1000;
+  int n_therm = 4000;
   int n_max = 100000;
 
   // Create a lattice object. 
@@ -64,6 +64,9 @@ int main(int argc, char** argv)
 
     // Get compact links.
     polar_vector(phases, field1, lat->get_size_gauge());
+
+    //write_gauge_u1(field1, lat, "./output_cfg");
+
     double plaq_tmp = std::real(get_plaquette_u1(field1, lat));
     cout << i << " " << plaq_tmp << " " << get_topo_u1(field1, lat) << "\n";
     if (i > n_therm)

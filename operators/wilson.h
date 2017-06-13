@@ -163,6 +163,22 @@ void Wilson2D::update_links(complex<double>* gauge_links)
   caxy_blas(0.5*cplxI, priv_cmatrix, 1, hopping+3*cm_size+1, nc2, volume);
   caxy_blas(-0.5*cplxI, priv_cmatrix, 1, hopping+3*cm_size+2, nc2, volume);
   caxy_blas(-0.5*wilson_coeff, priv_cmatrix, 1, hopping+3*cm_size+3, nc2, volume);
+
+  // Kill rbjacobi, dagger links if they exist.
+  if (built_dagger)
+  {
+    deallocate_vector(&dagger_clover);
+    deallocate_vector(&dagger_hopping);
+    built_dagger = false;
+  }
+
+  if (built_rbjacobi)
+  {
+    deallocate_vector(&rbjacobi_cinv);
+    deallocate_vector(&rbjacobi_clover);
+    deallocate_vector(&rbjacobi_hopping);
+    built_rbjacobi = false;
+  }
 }
 
 

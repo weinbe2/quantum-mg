@@ -98,6 +98,20 @@ public:
     cshift(priv_cmatrix, gauge_links + cm_size, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_EVENODD, 1, lat);
     conj_vector(priv_cmatrix, cm_size);
     caxpy(-1.0, priv_cmatrix, hopping + 3*cm_size, cm_size);
+
+    // Kill rbjacobi, dagger links if they exist.
+    if (built_dagger)
+    {
+      deallocate_vector(&dagger_hopping);
+      built_dagger = false;
+    }
+
+    if (built_rbjacobi)
+    {
+      deallocate_vector(&rbjacobi_cinv);
+      deallocate_vector(&rbjacobi_hopping);
+      built_rbjacobi = false;
+    }
   }
 
   // Square laplace has one dof per site.

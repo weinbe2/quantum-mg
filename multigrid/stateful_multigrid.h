@@ -88,6 +88,11 @@ public:
 
   };
 
+
+
+  // Structure that tracks how many Dslash operations are
+  // performed at each iteration. 
+
   // Structure that describes how to do the coarsest solve.
   struct CoarsestSolveMG
   {
@@ -395,23 +400,26 @@ public:
     zero_vector(r_coarse, coarse_size);
     transfer->restrict_f2c(r1, r_coarse);
     fine_storage->check_in(r1);
+    double rnorm = sqrt(norm2sq(r_coarse, coarse_size));
     complex<double>* r_coarse_prep = coarse_storage->check_out();
     zero_vector(r_coarse_prep, coarse_size);
     coarse_stencil->prepare_M(r_coarse_prep, r_coarse, coarse_stencil_type);
+    double rnorm_prep = sqrt(norm2sq(r_coarse_prep, coarse_size));
     complex<double>* e_coarse = coarse_storage->check_out();
     zero_vector(e_coarse, coarse_size);
     if (level == total_num_levels-2) // if we're already on the coarsest level
     {
       if (coarse_restart == -1)
       {
+        // Need to add norm factor to get proper un-preperared norm.
         invif = minv_vector_gcr(e_coarse, r_coarse_prep, coarse_size_solve,
-                          coarse_max_iter, coarse_tol, 
+                          coarse_max_iter, coarse_tol*rnorm/rnorm_prep, 
                           apply_coarse_M, (void*)coarse_stencil, &verb2);
       }
       else
       {
         invif = minv_vector_gcr_restart(e_coarse, r_coarse_prep, coarse_size_solve,
-                          coarse_max_iter, coarse_tol, coarse_restart, 
+                          coarse_max_iter, coarse_tol*rnorm/rnorm_prep, coarse_restart, 
                           apply_coarse_M, (void*)coarse_stencil, &verb2);
       }
     }
@@ -423,14 +431,14 @@ public:
       if (coarse_restart == -1)
       {
         invif = minv_vector_gcr_var_precond(e_coarse, r_coarse_prep, coarse_size_solve,
-                          coarse_max_iter, coarse_tol,
+                          coarse_max_iter, coarse_tol*rnorm/rnorm_prep,
                           apply_coarse_M, (void*)coarse_stencil,
                           mg_preconditioner, (void*)mg_object, &verb2);
       }
       else
       {
         invif = minv_vector_gcr_var_precond_restart(e_coarse, r_coarse_prep, coarse_size_solve,
-                          coarse_max_iter, coarse_tol, coarse_restart,
+                          coarse_max_iter, coarse_tol*rnorm/rnorm_prep, coarse_restart,
                           apply_coarse_M, (void*)coarse_stencil,
                           mg_preconditioner, (void*)mg_object, &verb2);
       }
