@@ -91,5 +91,80 @@ template<typename T> inline void redot_cv_timeslice(complex<T>* sum, complex<T>*
   }
 }
 
+// Create a real gaussian source on a timeslice, for a given dof.
+template<typename T> inline void gaussian_wall_source(T* cv, int timeslice, int color, Lattice2D* lat, std::mt19937 &generator, T deviation = 1.0, T mean = 0.0)
+{
+  int i;
+  int x, y, c;
+  const int nt = lat->get_dim_mu(lat->get_nd()-1);
+  if (timeslice >= nt)
+  {
+    std::cout << "[QMG-ERROR]: Cannot create gaussian wall source for t < Nt.\n";
+    return;
+  }
+
+  const int nc = lat->get_nc();
+  if (color >= nc)
+  {
+    std::cout << "[QMG-ERROR]: Cannot create gaussian wall source for color < Nc.\n";
+    return;
+  }
+
+  const int size_cv = lat->get_size_cv();
+
+  // Generate a normal distribution.
+  std::normal_distribution<> dist(0.0, deviation);
+
+  for (i = 0; i < size_cv; i++)
+  {
+    lat->cv_index_to_coord(i, x, y, c);
+    if (c == color && y == timeslice)
+    {
+      cv[i] = static_cast<T>(mean + dist(generator));
+    }
+    else
+    {
+      cv[i] = static_cast<T>(0.0);
+    }
+  }
+}
+
+template<typename T> inline void gaussian_wall_source(std::complex<T>* cv, int timeslice, int color, Lattice2D* lat, std::mt19937 &generator, T deviation = 1.0, T mean = 0.0)
+{
+  int i;
+  int x, y, c;
+  const int nt = lat->get_dim_mu(lat->get_nd()-1);
+  if (timeslice >= nt)
+  {
+    std::cout << "[QMG-ERROR]: Cannot create gaussian wall source for t < Nt.\n";
+    return;
+  }
+
+  const int nc = lat->get_nc();
+  if (color >= nc)
+  {
+    std::cout << "[QMG-ERROR]: Cannot create gaussian wall source for color < Nc.\n";
+    return;
+  }
+
+  const int size_cv = lat->get_size_cv();
+
+  // Generate a normal distribution.
+  std::normal_distribution<> dist(0.0, deviation);
+
+  for (i = 0; i < size_cv; i++)
+  {
+    lat->cv_index_to_coord(i, x, y, c);
+    if (c == color && y == timeslice)
+    {
+      cv[i] = std::complex<T>(static_cast<T>(mean + dist(generator)), static_cast<T>(0.0));
+    }
+    else
+    {
+      cv[i] = static_cast<T>(0.0);
+    }
+  }
+}
+
 #endif // QMG_REDUCTIONS
 
