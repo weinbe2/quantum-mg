@@ -8,6 +8,8 @@
 // This way we can track the number of operator applications over 
 // the entire solve. 
 
+#include <map>
+
 // QLINALG
 #include "blas/generic_vector.h"
 #include "inverters/generic_gcr.h"
@@ -16,6 +18,16 @@
 // QMG
 #include "stencil/stencil_2d.h"
 #include "multigrid/multigrid.h"
+
+// A structure that indicates where different dslash
+// counts can come from.
+enum QMGDslashType
+{
+  QMG_DSLASH_TYPE_NULLVEC = 0,
+  QMG_DSLASH_TYPE_KRYLOV = 1,
+  QMG_DSLASH_TYPE_PRESMOOTH = 2,
+  QMG_DSLASH_TYPE_POSTSMOOTH = 3,
+};
 
 
 // A class that inherits from MultigridMG, adding extra functions
@@ -88,10 +100,79 @@ public:
 
   };
 
-
-
-  // Structure that tracks how many Dslash operations are
+  // Class that tracks how many Dslash operations are
   // performed at each iteration. 
+  class DslashTrackerMG
+  {
+  private:
+    // Get rid of copy, assignment.
+    DslashTrackerMG(DslashTrackerMG const &);
+    DslashTrackerMG& operator=(DslashTrackerMG const &);
+
+    // Track different dslash counts.
+    std::map<QMGDslashType,int> tracker;
+    int iterations;
+    int total;
+
+  public:
+
+    // Constructor.
+    DslashTrackerMG()
+    {
+      // Set initial values.
+      tracker[QMG_DSLASH_TYPE_NULLVEC] = 0;
+      tracker[QMG_DSLASH_TYPE_KRYLOV] = 0;
+      tracker[QMG_DSLASH_TYPE_PRESMOOTH] = 0;
+      tracker[QMG_DSLASH_TYPE_POSTSMOOTH] = 0;
+      total = 0;
+      iterations = 0;
+    }
+
+    // Nothing in destructor.
+
+    // Update routine.
+    void add_tracker_count(QMGDslashType type, int accum)
+    {
+      tracker[type] += accum;
+      total += accum;
+    }
+
+    // Count Krylov iterations. 
+    void add_iterations_count(int accum)
+    {
+      iterations += accum;
+    }
+
+    // get_count
+    int get_tracker_count(QMGDslashType type)
+    {
+      return tracker[type];
+    }
+
+    int get_total_count()
+    {
+      return total;
+    }
+
+    int get_iterations_count()
+    {
+      return iterations;
+    }
+
+    // Reset
+    void reset_tracker()
+    {
+      // Set initial values.
+      tracker[QMG_DSLASH_TYPE_NULLVEC] = 0;
+      tracker[QMG_DSLASH_TYPE_KRYLOV] = 0;
+      tracker[QMG_DSLASH_TYPE_PRESMOOTH] = 0;
+      tracker[QMG_DSLASH_TYPE_POSTSMOOTH] = 0;
+      total = 0;
+      iterations = 0;
+    }
+
+  };
+
 
   // Structure that describes how to do the coarsest solve.
   struct CoarsestSolveMG
@@ -126,6 +207,10 @@ protected:
   // Vector of LevelSolveMG. Should be of length mg_object->get_num_levels()-1.
   vector<LevelSolveMG*> level_solve_list;
 
+  // Information on Dslash counts on each level.
+  // Should always be of length mg_object->get_num_levels().
+  vector<DslashTrackerMG*> dslash_tracker_list;
+
   // Information on the coarsest level solve.
   CoarsestSolveMG* coarsest_solve; 
 
@@ -135,9 +220,20 @@ public:
   StatefulMultigridMG(Lattice2D* in_lat, Stencil2D* in_stencil, CoarsestSolveMG* in_coarsest_solve)
     : MultigridMG(in_lat, in_stencil), coarsest_solve(in_coarsest_solve)
   {
-
     // Set the current level to zero.
     current_level = 0;
+
+    // Prepare dslash counter.
+    dslash_tracker_list.push_back(new DslashTrackerMG());
+  }
+
+  ~StatefulMultigridMG()
+  {
+    for (int i = 0; i < get_num_levels(); i++)
+    {
+      delete dslash_tracker_list[i];
+      dslash_tracker_list[i] = 0;
+    }
   }
 
   // Set the multigrid level.
@@ -215,18 +311,21 @@ public:
   {
     MultigridMG::push_level(new_lat, new_transfer, build_stencil, is_chiral, build_stencil_from, build_extra, nvecs);
     level_solve_list.push_back(0); // oiiii
+    dslash_tracker_list.push_back(new DslashTrackerMG());
   }
 
   void push_level(Lattice2D* new_lat, TransferMG* new_transfer, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, complex<double>** nvecs = 0)
   {
     MultigridMG::push_level(new_lat, new_transfer, build_stencil, is_chiral, build_stencil_from, nvecs);
     level_solve_list.push_back(0); // oiiii
+    dslash_tracker_list.push_back(new DslashTrackerMG());
   }
 
   void push_level(Lattice2D* new_lat, TransferMG* new_transfer,complex<double>** nvecs)
   {
     MultigridMG::push_level(new_lat, new_transfer, nvecs);
     level_solve_list.push_back(0); // oiiii
+    dslash_tracker_list.push_back(new DslashTrackerMG());
   }
 
   // Safe versions of push_level which also push a new LevelSolveMG object.
@@ -245,6 +344,8 @@ public:
     }
 
     level_solve_list.push_back(in_solve);
+
+    dslash_tracker_list.push_back(new DslashTrackerMG());
   }
 
   void push_level(Lattice2D* new_lat, TransferMG* new_transfer, LevelSolveMG* in_solve, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, complex<double>** nvecs = 0)
@@ -261,6 +362,8 @@ public:
     }
 
     level_solve_list.push_back(in_solve);
+
+    dslash_tracker_list.push_back(new DslashTrackerMG());
   }
 
   void push_level(Lattice2D* new_lat, TransferMG* new_transfer, LevelSolveMG* in_solve, complex<double>** nvecs)
@@ -277,6 +380,8 @@ public:
     }
 
     level_solve_list.push_back(in_solve);
+
+    dslash_tracker_list.push_back(new DslashTrackerMG());
   }
 
   // Overloaded version of pop_level which also pops the level_solve_list.
@@ -286,8 +391,117 @@ public:
 
     // Pop level solve info.
     level_solve_list.pop_back();
+
+    int i = num_levels-1;
+
+    // Deallocate vectors.
+    if (dslash_tracker_list[i] != 0)
+    {
+      delete dslash_tracker_list[i];
+      dslash_tracker_list.pop_back();
+    }
+
   }
 
+  // Update the track at a given level.
+  void add_tracker_count(QMGDslashType type, int accum, int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      dslash_tracker_list[i]->add_tracker_count(type, accum);
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot update tracker at level " << i << ".\n";
+    }
+  }
+
+  // Count Krylov iterations.
+  void add_iterations_count(int accum, int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      dslash_tracker_list[i]->add_iterations_count(accum);
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot update tracker at level " << i << ".\n";
+    }
+  }
+
+  // Query the track at a given level.
+  int get_tracker_count(QMGDslashType type, int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      return dslash_tracker_list[i]->get_tracker_count(type);
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot query tracker at level " << i << ".\n";
+      return -1;
+    }
+  }
+
+  // Get total number of ops
+  int get_total_count(int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      return dslash_tracker_list[i]->get_total_count();
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot query tracker at level " << i << ".\n";
+      return -1;
+    }
+  }
+
+  // Get total number of ops
+  int get_iterations_count(int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      return dslash_tracker_list[i]->get_iterations_count();
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot query tracker at level " << i << ".\n";
+      return -1;
+    }
+  }
+
+  // Get average iterations per level
+  std::vector<double> query_average_iterations()
+  {
+    std::vector<double> avg(num_levels);
+    avg[0] = dslash_tracker_list[0]->get_iterations_count();
+    for (int i = 1; i < num_levels; i++)
+    {
+      avg[i] = ((double)dslash_tracker_list[i]->get_iterations_count())/((double)dslash_tracker_list[i-1]->get_iterations_count());
+    }
+    return avg; 
+  }
+
+  // Reset the tracker at a given level, or all for -1.
+  void reset_tracker(QMGDslashType type, int accum, int i = -1)
+  {
+    if (i == -1)
+    {
+      for (int j = 0; j < num_levels; j++)
+        dslash_tracker_list[j]->reset_tracker();
+    }
+    else if (i >= 0 && i < num_levels)
+    {
+      dslash_tracker_list[i]->reset_tracker();
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot reset tracker at level " << i << ".\n";
+    }
+  }
+
+  // Need to add counters for prepare/reconstruct. 
   static void mg_preconditioner(complex<double>* lhs, complex<double>* rhs, int size, void* extra_data, inversion_verbose_struct* verb)
   {
     // Expose the Multigrid objects.
@@ -354,6 +568,13 @@ public:
     if (fine_stencil_type == QMG_MATVEC_RIGHT_SCHUR)
       fine_size_solve /= 2;
 
+    // If the number of levels = 1, there's no cycle. Copy and return.
+    if (total_num_levels == 1)
+    {
+      copy_vector(lhs, rhs, fine_size_solve);
+      return;
+    }
+
     // Learn about coarse solve.
     int coarse_max_iter;
     double coarse_tol;
@@ -389,9 +610,10 @@ public:
     // Solve A z1 = rhs, form new residual r1 = rhs - A z1
     complex<double>* z1 = fine_storage->check_out();
     zero_vector(z1, fine_size);
-    minv_vector_gcr_restart(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_fine_M, (void*)fine_stencil);
+    invif = minv_vector_gcr_restart(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_fine_M, (void*)fine_stencil);
     zero_vector(Atmp, fine_size);
     fine_stencil->apply_M(Atmp, z1, fine_stencil_type);
+    mg_object->add_tracker_count(QMG_DSLASH_TYPE_PRESMOOTH, invif.ops_count+1, level); // smoother ops + residual. 
     complex<double>* r1 = fine_storage->check_out();
     caxpbyz(1.0, rhs, -1.0, Atmp, r1, fine_size_solve);
 
@@ -446,6 +668,8 @@ public:
       //mg_preconditioner(e_coarse, r_coarse, coarse_size, (void*)stateful_mg_object);
       mg_object->go_finer();
     }
+    mg_object->add_tracker_count(QMG_DSLASH_TYPE_KRYLOV, invif.ops_count, level+1);
+    mg_object->add_iterations_count(invif.iter, level+1);
     //cout << "Level " << level << " coarse preconditioner took " << invif.iter << " iterations.\n" << flush;
     coarse_storage->check_in(r_coarse_prep);
     complex<double>* e_coarse_reconstruct = coarse_storage->check_out();
@@ -477,7 +701,8 @@ public:
     caxpbyz(1.0, rhs, -1.0, Atmp, r2, fine_size_solve);
     complex<double>* z3 = fine_storage->check_out();
     zero_vector(z3, fine_size);
-    minv_vector_gcr(z3, r2, fine_size_solve, n_post_smooth, post_smooth_tol, apply_fine_M, (void*)fine_stencil);
+    invif = minv_vector_gcr(z3, r2, fine_size_solve, n_post_smooth, post_smooth_tol, apply_fine_M, (void*)fine_stencil);
+    mg_object->add_tracker_count(QMG_DSLASH_TYPE_POSTSMOOTH, invif.ops_count+1, level); // smoother ops + residual
     cxpy(z3, lhs, fine_size_solve);
 
     // Check vectors back in.
