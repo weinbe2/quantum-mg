@@ -50,7 +50,12 @@ public:
 
 public:
 
-  // Base constructor.
+  // Base constructor to set up a bare stencil.
+  CoarseOperator2D(Lattice2D* in_lat, int pieces, bool is_chiral, complex<double> in_shift = 0.0, complex<double> in_eo_shift = 0.0, complex<double> in_dof_shift = 0.0)
+    : Stencil2D(in_lat, pieces, in_shift, in_eo_shift, in_dof_shift), is_chiral(is_chiral), use_rbjacobi(false)
+  { ; }
+
+  // Base constructor to build a coarse stencil from a fine stencil.
   // NOTE! Need a way to determine QMG_PIECE_... based on the
   // input stencil. Maybe there needs to be a function in each stencil
   // to determine the size, then some smart function that figures
