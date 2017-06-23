@@ -17,6 +17,7 @@ using namespace std;
 #include "inverters/generic_gcr.h"
 #include "inverters/generic_gcr_var_precond.h"
 #include "inverters/generic_bicgstab_l.h"
+#include "interfaces/arpack/generic_arpack.h"
 
 // QMG
 #include "lattice/lattice.h"
@@ -38,6 +39,9 @@ int main(int argc, char** argv)
   // interacting (four algebraic null vectors) case?
   const bool do_free = false;
 
+  // Check the spectrum?
+  const bool do_spectrum = true;
+
   // Set output precision to be long.
   cout << setprecision(20);
 
@@ -45,8 +49,9 @@ int main(int argc, char** argv)
   std::mt19937 generator (1337u);
 
   // Basic information for fine level.
-  const int x_len = 64;
-  const int y_len = 64;
+  const int x_len = 16;
+  const int y_len = 16;
+  const double beta = 6.0;
   const int dof = Wilson2D::get_dof();
 
   // Information on the Wilson operator.
@@ -78,7 +83,7 @@ int main(int argc, char** argv)
   }
 
   // How many times to refine. 
-  const int n_refine = 2; // (64 -> 16 -> 4 -> 1)
+  const int n_refine = 1; // (64 -> 16 -> 4 -> 1)
 
   // Information about the outermost solve.
   const double tol = 1e-8; 
@@ -117,28 +122,94 @@ int main(int argc, char** argv)
 
   // Prepare the gauge field.
   Lattice2D* lat_gauge = new Lattice2D(x_len, y_len, 1); // hack...
-  complex<double>* gauge_field = allocate_vector<complex<double>>(lats[0]->get_size_gauge());
+  complex<double>* gauge_field = allocate_vector<complex<double>>(lat_gauge->get_size_gauge());
   if (do_free)
   {
     unit_gauge_u1(gauge_field, lat_gauge);
   }
   else
   {
-    switch (x_len)
+    bool need_heatbath = false;
+    if (beta == 6.0)
     {
-      case 32:
-        read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l32t32b60_heatbath.dat");
-        break;
-      case 64:
-        read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l64t64b60_heatbath.dat");
-        break;
-      default:
-        std::cout << "[QMG-ERROR]: Invalid lattice size.\n";
-        return -1;
-        break;
+      switch (x_len)
+      {
+        case 32:
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l32t32b60_heatbath.dat");
+          break;
+        case 64:
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l64t64b60_heatbath.dat");
+          break;
+        case 128:
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l128t128b60_heatbath.dat");
+          break;
+        case 192:
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l192t192b60_heatbath.dat");
+          break;
+        case 256:
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l256t256b60_heatbath.dat");
+          break;
+        default:
+          need_heatbath = true;
+          break;
+      }
+    }
+    else if (beta == 10.0)
+    {
+      switch (x_len)
+      {
+        case 32:
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l32t32b100_heatbath.dat");
+          break;
+        case 64:
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l64t64b100_heatbath.dat");
+          break;
+        case 128:
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l128t128b100_heatbath.dat");
+          break;
+        case 192:
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l192t192b100_heatbath.dat");
+          break;
+        default:
+          need_heatbath = true;
+          break;
+      }
+    }
+    else
+      need_heatbath = true;
+
+    if (need_heatbath)
+    {
+      std::cout << "[QMG-NOTE]: L = " << x_len << " beta = " << beta << " requires heatbath generation.\n";
+
+      int n_therm = 4000; // how many heatbath steps to perform.
+      int n_meas = 100; // how often to measure the plaquette, topo.
+      double* phases = allocate_vector<double>(lat_gauge->get_size_gauge());
+      zero_vector(phases, lat_gauge->get_size_gauge());
+      double plaq = 0.0; // track along the way
+      double topo = 0.0;
+      for (int i = 0; i < n_therm; i += n_meas)
+      {
+        // Perform non-compact update.
+        heatbath_noncompact_update(phases, lat_gauge, beta, n_therm/n_meas, generator);
+
+        // Get compact links.
+        polar_vector(phases, gauge_field, lat_gauge->get_size_gauge());
+
+        plaq = std::real(get_plaquette_u1(gauge_field, lat_gauge));
+        topo = std::real(get_topo_u1(gauge_field, lat_gauge));
+        std::cout << "[QMG-HEATBATH]: Update " << i << " Plaq " << plaq << " Topo " << topo << "\n";
+      }
+
+      // Acquire final gauge field.
+      polar_vector(phases, gauge_field, lat_gauge->get_size_gauge());
+
+      // Clean up.
+      deallocate_vector(&phases);
     }
   }
   delete lat_gauge;
+
 
   // Create a Wilson stencil.
   Wilson2D* wilson_op = new Wilson2D(lats[0], mass, gauge_field);
@@ -335,6 +406,51 @@ int main(int argc, char** argv)
   mg_object->check_in(Ax, 0);
   mg_object->check_in(x, 0);
   mg_object->check_in(b, 0);
+
+  /////////////////////////
+  // Check the spectrum. //
+  /////////////////////////
+
+  if (do_spectrum)
+  {
+    // Declare an arpack object and some storage.
+    arpack_dcn* arpack;
+    complex<double>* eigs;
+
+    // Get spectrum of Wilson op.
+    arpack = new arpack_dcn(lats[0]->get_size_cv(), 4000, 1e-7, apply_stencil_2D_M, (void*)mg_object->get_stencil(0));
+    eigs = new complex<double>[lats[0]->get_size_cv()];
+    /*evecs = new complex<double>*(lats[1]->get_size_cv());
+    for (i = 0; i < lats[1]->get_size_cv())
+    {
+      evecs[i] = allocate_vector<complex<double> >(lats[1]->get_size_cv());
+    }*/
+
+    arpack->get_entire_eigensystem(eigs, arpack_dcn::ARPACK_SMALLEST_REAL);
+
+    for (i = 0; i < lats[0]->get_size_cv(); i++)
+      std::cout << "[ORIG-SPECTRUM]: " << i << " " << real(eigs[i]) << " + I " << imag(eigs[i]) << "\n";
+
+    delete[] eigs;
+    delete arpack;
+
+    // Get spectrum of coarsened op.
+    arpack = new arpack_dcn(lats[1]->get_size_cv(), 4000, 1e-7, apply_stencil_2D_M, (void*)mg_object->get_stencil(1));
+    eigs = new complex<double>[lats[1]->get_size_cv()];
+    /*evecs = new complex<double>*(lats[1]->get_size_cv());
+    for (i = 0; i < lats[1]->get_size_cv())
+    {
+      evecs[i] = allocate_vector<complex<double> >(lats[1]->get_size_cv());
+    }*/
+
+    arpack->get_entire_eigensystem(eigs, arpack_dcn::ARPACK_SMALLEST_REAL);
+
+    for (i = 0; i < lats[1]->get_size_cv(); i++)
+      std::cout << "[COARSE-SPECTRUM]: " << i << " " << real(eigs[i]) << " + I " << imag(eigs[i]) << "\n";
+
+    delete[] eigs;
+    delete arpack;
+  }
 
   ///////////////
   // Clean up. //
