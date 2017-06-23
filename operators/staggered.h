@@ -137,6 +137,17 @@ public:
     return QMG_CHIRAL_YES; 
   }
 
+  virtual void gamma5(complex<double>* vec)
+  {
+    cax(-1.0, vec+lat->get_size_cv()/2, lat->get_size_cv()/2);
+  }
+
+  virtual void gamma5(complex<double>* g5_vec, complex<double>* vec)
+  {
+    copy_vector(g5_vec, vec, lat->get_size_cv()/2);
+    caxy(-1.0, vec+lat->get_size_cv()/2, g5_vec+lat->get_size_cv()/2, lat->get_size_cv()/2);
+  }
+
   // Chirality is even/odd. 
   virtual void chiral_projection(complex<double>* vector, bool is_up)
   {

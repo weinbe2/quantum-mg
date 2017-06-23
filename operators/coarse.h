@@ -443,6 +443,33 @@ public:
     return QMG_CHIRAL_UNKNOWN; 
   }
 
+  virtual void gamma5(complex<double>* vec)
+  {
+    if (is_chiral)
+    {
+      const int nc = lat->get_nc();
+      {
+        for (int c = nc/2; c < nc; c++)
+          cax_blas(-1.0, vec+c, nc, lat->get_size_cv()/nc);
+      }
+    }
+  }
+
+  virtual void gamma5(complex<double>* g5_vec, complex<double>* vec)
+  {
+    if (is_chiral)
+    {
+      const int nc = lat->get_nc();
+      {
+        for (int c = 0; c < nc/2; c++)
+          caxy_blas(1.0, vec+c, nc, g5_vec+c, nc, lat->get_size_cv()/nc);
+
+        for (int c = nc/2; c < nc; c++)
+          caxy_blas(-1.0, vec+c, nc, g5_vec+c, nc, lat->get_size_cv()/nc);
+      }
+    }
+  }
+
   // Chirality either does not exist or is internal dof.
   virtual void chiral_projection(complex<double>* vector, bool is_up)
   {

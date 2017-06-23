@@ -71,6 +71,27 @@ public:
     return QMG_CHIRAL_YES; 
   }
 
+  virtual void gamma5(complex<double>* vec)
+  {
+    const int nc = lat->get_nc();
+    {
+      for (int c = nc/2; c < nc; c++)
+        cax_blas(-1.0, vec+c, nc, lat->get_size_cv()/nc);
+    }
+  }
+
+  virtual void gamma5(complex<double>* g5_vec, complex<double>* vec)
+  {
+    const int nc = lat->get_nc();
+    {
+      for (int c = 0; c < nc/2; c++)
+        caxy_blas(1.0, vec+c, nc, g5_vec+c, nc, lat->get_size_cv()/nc);
+
+      for (int c = nc/2; c < nc; c++)
+        caxy_blas(-1.0, vec+c, nc, g5_vec+c, nc, lat->get_size_cv()/nc);
+    }
+  }
+
   // First component per site is up, second component per site is down.
   virtual void chiral_projection(complex<double>* vector, bool is_up)
   {
