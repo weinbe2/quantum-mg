@@ -1820,7 +1820,7 @@ public:
       cMATcopy_conjtrans_square(rbjacobi_clover, rbj_dagger_clover, vol, nc);
     }
       
-    if (hopping != 0)
+    if (rbjacobi_hopping != 0)
     {
       rbj_dagger_hopping = allocate_vector<complex<double>>(lat->get_size_hopping());
 
@@ -1857,7 +1857,7 @@ public:
       cout << "[QMG-WARNING]: corner stencil not yet supported.\n";
     }
 
-    built_dagger = true; 
+    built_rbj_dagger = true; 
 
   }
 
@@ -1903,7 +1903,7 @@ public:
 
   void print_stencil_rbj_dagger_site(int x, int y, string prefix = "")
   {
-    if (!built_dagger)
+    if (!built_rbj_dagger)
     {
       std::cout << "[QMG-WARNING]: Tried to call print_stencil_rbj_dagger_site, but the right jacobi dagger stencil has not been allocated.\n";
       return;
