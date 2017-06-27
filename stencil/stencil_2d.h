@@ -68,6 +68,9 @@ enum QMGStencilType
   QMG_MATVEC_RIGHT_SCHUR = 3, // apply schur eo right block jacobi
   QMG_MATVEC_M_MDAGGER = 4, // apply M M^dagger
   QMG_MATVEC_MDAGGER_M = 5, // apply M^dagger M
+  QMG_MATVEC_RBJ_DAGGER = 6, // Apply rbj dagger.
+  QMG_MATVEC_RBJ_M_MDAGGER = 7, // Apply rbj M M^dagger
+  QMG_MATVEC_RBJ_MDAGGER_M = 8, // Apply rbj M^dagger
 };
 
 
@@ -83,6 +86,12 @@ void apply_stencil_2D_M_M_dagger(complex<double>* lhs, complex<double>* rhs, voi
 void apply_stencil_2D_M_rbjacobi(complex<double>* lhs, complex<double>* rhs, void* extra_data);
 
 void apply_stencil_2D_M_rbjacobi_schur(complex<double>* lhs, complex<double>* rhs, void* extra_data);
+
+void apply_stencil_2D_M_rbj_dagger(complex<double>* lhs, complex<double>* rhs, void* extra_data);
+
+void apply_stencil_2D_M_rbjacobi_MMD(complex<double>* lhs, complex<double>* rhs, void* extra_data);
+
+void apply_stencil_2D_M_rbjacobi_MDM(complex<double>* lhs, complex<double>* rhs, void* extra_data);
 
 
 struct Stencil2D
@@ -112,6 +121,9 @@ protected:
 
   // Have we swapped to rbjacobi stencils?
   bool swap_rbjacobi;
+
+  // Have we swapped to rbjacobi dagger stencils?
+  bool swap_rbj_dagger;
 
 public:
   // Associated lattice!
@@ -165,6 +177,15 @@ public:
   // We also need an extra spot to hold the inverse of the original clover.
   // We need this for the reconstruct. 
   complex<double>* rbjacobi_cinv;
+
+  // Variables related to the rbj_dagger stencil. These only get filled on
+  // request by calling "build_right_jacobi_dagger_stencil".
+  // The "clover" is the trivial identity. Could be made more efficient.
+  bool built_rbj_dagger;
+  complex<double>* rbj_dagger_clover;
+  complex<double>* rbj_dagger_hopping;
+  complex<double>* rbj_dagger_twolink;
+  complex<double>* rbj_dagger_corner;
 
   // Base constructor
   Stencil2D(Lattice2D* in_lat, int pieces, complex<double> in_shift = 0.0, complex<double> in_eo_shift = 0.0, complex<double> in_dof_shift = 0.0)
@@ -233,12 +254,20 @@ public:
     rbjacobi_corner = 0;
     rbjacobi_cinv = 0;
 
+    // Set all rbjacobi dagger variables to zero.
+    built_rbj_dagger = false;
+    rbj_dagger_clover = 0;
+    rbj_dagger_hopping = 0;
+    rbj_dagger_twolink = 0;
+    rbj_dagger_corner = 0;
+
     // Set swaps and backups.
     shift_backup = shift;
     eo_shift_backup = eo_shift;
     dof_shift_backup = dof_shift;
     swap_dagger = false;
     swap_rbjacobi = false; 
+    swap_rbj_dagger = false;
 
   }
   
@@ -271,6 +300,12 @@ public:
     if (rbjacobi_corner != 0) { deallocate_vector(&rbjacobi_corner); }
     if (rbjacobi_cinv != 0) { deallocate_vector(&rbjacobi_cinv); }
     built_rbjacobi = false; 
+
+    if (rbj_dagger_clover != 0) { deallocate_vector(&rbj_dagger_clover); }
+    if (rbj_dagger_hopping != 0) { deallocate_vector(&rbj_dagger_hopping); }
+    if (rbj_dagger_twolink != 0) { deallocate_vector(&rbj_dagger_twolink); }
+    if (rbj_dagger_corner != 0) { deallocate_vector(&rbj_dagger_corner); }
+    built_rbjacobi = false; 
     
     generated = false; 
 
@@ -300,6 +335,15 @@ public:
       if (rbjacobi_twolink != 0) { zero_vector(rbjacobi_twolink, lat->get_size_hopping()); }
       if (rbjacobi_corner != 0) { zero_vector(rbjacobi_corner, lat->get_size_corner()); }
       if (rbjacobi_cinv != 0) { zero_vector(rbjacobi_cinv, lat->get_size_cm()); }
+      built_rbjacobi = false; 
+    }
+
+    if (built_rbj_dagger)
+    {
+      if (rbj_dagger_clover != 0) { zero_vector(rbj_dagger_clover, lat->get_size_cm()); }
+      if (rbj_dagger_hopping != 0) { zero_vector(rbj_dagger_hopping, lat->get_size_hopping()); }
+      if (rbj_dagger_twolink != 0) { zero_vector(rbj_dagger_twolink, lat->get_size_hopping()); }
+      if (rbj_dagger_corner != 0) { zero_vector(rbj_dagger_corner, lat->get_size_corner()); }
       built_rbjacobi = false; 
     }
     
@@ -1746,6 +1790,392 @@ public:
     copy_vector(x, y_e, lat->get_size_cv()/2);
   }
 
+  //////////////////////////////
+  // DAGGER STENCIL FUNCTIONS //
+  //////////////////////////////
+
+  void build_rbj_dagger_stencil()
+  {
+    if (built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call build_rbj_dagger_stencil, but it's already been called once.\n";
+      return;
+    }
+
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call build_rbj_dagger_stencil, but the right jacobi stencil has not been built yet.\n";
+      return;
+    }
+
+    const int nc = lat->get_nc();
+    const int nc2 = nc*nc;
+    const int vol = lat->get_volume();
+    const int size_cm = lat->get_size_cm();
+
+    // As with anything else, this only supports one-link stencils for now.
+    if (rbjacobi_clover != 0)
+    {
+      rbj_dagger_clover = allocate_vector<complex<double>>(lat->get_size_cm());
+      cMATcopy_conjtrans_square(rbjacobi_clover, rbj_dagger_clover, vol, nc);
+    }
+      
+    if (hopping != 0)
+    {
+      rbj_dagger_hopping = allocate_vector<complex<double>>(lat->get_size_hopping());
+
+      // +x
+      // The right link is the dagger of the left link of the site from the right.
+      cshift(priv_cmatrix, rbjacobi_hopping + 2*size_cm, QMG_CSHIFT_FROM_XP1, QMG_EO_FROM_EVENODD, nc2, lat);
+      cMATcopy_conjtrans_square(priv_cmatrix, rbj_dagger_hopping, vol, nc);
+
+      // +y
+      // The up link is the dagger of the down link of the site from above.
+      cshift(priv_cmatrix, rbjacobi_hopping + 3*size_cm, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_EVENODD, nc2, lat);
+      cMATcopy_conjtrans_square(priv_cmatrix, rbj_dagger_hopping + size_cm, vol, nc);
+
+      // -x
+      // The left link is the dagger of the right link of the site from the left.
+      cshift(priv_cmatrix, rbjacobi_hopping, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_EVENODD, nc2, lat);
+      cMATcopy_conjtrans_square(priv_cmatrix, rbj_dagger_hopping + 2*size_cm, vol, nc);
+
+      // -y
+      // The down link is the dagger of the up link of the site below. 
+      cshift(priv_cmatrix, rbjacobi_hopping + size_cm, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_EVENODD, nc2, lat);
+      cMATcopy_conjtrans_square(priv_cmatrix, rbj_dagger_hopping + 3*size_cm, vol, nc);
+    }
+    
+    if (twolink != 0)
+    {
+      //dagger_twolink = allocate_vector<complex<double>>(lat->get_size_hopping());
+      cout << "[QMG-WARNING]: two link stencil not yet supported.\n";
+    }
+      
+    if (corner != 0)
+    {
+      //dagger_corner = allocate_vector<complex<double>>(lat->get_size_corner());
+      cout << "[QMG-WARNING]: corner stencil not yet supported.\n";
+    }
+
+    built_dagger = true; 
+
+  }
+
+  // Perform swaps to put dagger stencils in/out of place.
+  bool perform_swap_rbj_dagger()
+  {
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call perform_swap_rbj_dagger, but the right jacobi dagger stencil has not been allocated.\n";
+      return false;
+    }
+
+    if (!swap_rbj_dagger)
+    {
+      // Swap dagger stencils in.
+      // Pointer swaaaap.
+      std::swap(clover, rbj_dagger_clover);
+      std::swap(hopping, rbj_dagger_hopping);
+      std::swap(twolink, rbj_dagger_twolink);
+      std::swap(corner, rbj_dagger_corner);
+      shift = 0.0;
+      eo_shift = 0.0;
+      dof_shift = 0.0;
+      swap_rbj_dagger = true;
+    }
+    else
+    {
+      // Swap back.
+      std::swap(clover, rbj_dagger_clover);
+      std::swap(hopping, rbj_dagger_hopping);
+      std::swap(twolink, rbj_dagger_twolink);
+      std::swap(corner, rbj_dagger_corner);
+      shift = shift_backup;
+      eo_shift = eo_shift_backup;
+      dof_shift = dof_shift_backup;
+      swap_rbj_dagger = false;
+    }
+
+    return swap_rbj_dagger;
+  }
+
+  // Gettin' lazy over here!
+
+  void print_stencil_rbj_dagger_site(int x, int y, string prefix = "")
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call print_stencil_rbj_dagger_site, but the right jacobi dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    perform_swap_rbj_dagger();
+    print_stencil_site(x, y, prefix);
+    perform_swap_rbj_dagger();
+  }
+
+  
+  void apply_M_rbj_dagger_clover(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_clover, but the right jacobi dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (rbj_dagger_clover == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_clover, but the right jacobi dagger clover does not exist.\n";
+      return;
+    }
+
+    perform_swap_rbj_dagger();
+    apply_M_clover(lhs, rhs);
+    perform_swap_rbj_dagger();
+  }
+
+  void apply_M_rbj_dagger_eo(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_eo, but the right jacobi dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (rbj_dagger_hopping == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_eo, but the right jacobi dagger hopping term does not exist.\n";
+      return;
+    }
+
+    perform_swap_rbj_dagger();
+    apply_M_eo(lhs, rhs);
+    perform_swap_rbj_dagger();
+  }
+
+  void apply_M_rbj_dagger_eo(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
+  {
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_eo, but the right jacobi dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (rbj_dagger_hopping == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_eo, but the right jacobi dagger hopping term does not exist.\n";
+      return;
+    }
+
+    perform_swap_rbj_dagger();
+    apply_M_eo(lhs, rhs, dir);
+    perform_swap_rbj_dagger();
+  }
+  
+  void apply_M_rbj_dagger_oe(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_oe, but the right jacobi dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (rbj_dagger_hopping == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_oe, but the right jacobi dagger hopping term does not exist.\n";
+      return;
+    }
+
+    perform_swap_rbj_dagger();
+    apply_M_oe(lhs, rhs);
+    perform_swap_rbj_dagger();
+  }
+
+  void apply_M_rbj_dagger_oe(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
+  {
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_oe, but the right jacobi dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (rbj_dagger_hopping == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_oe, but the right jacobi dagger hopping term does not exist.\n";
+      return;
+    }
+
+    perform_swap_rbj_dagger();
+    apply_M_oe(lhs, rhs, dir);
+    perform_swap_rbj_dagger();
+  }
+
+  void apply_M_rbj_dagger_hopping(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_hopping, but the right jacobi dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (rbj_dagger_hopping == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_hopping, but the right jacobi dagger hopping term does not exist.\n";
+      return;
+    }
+
+    perform_swap_rbj_dagger();
+    apply_M_hopping(lhs, rhs);
+    perform_swap_rbj_dagger();
+  }
+
+  void apply_M_rbj_dagger_hopping(complex<double>* lhs, complex<double>* rhs, stencil_dir_index dir)
+  {
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_hopping, but the right jacobi dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (rbj_dagger_hopping == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_hopping, but the right jacobi dagger hopping term does not exist.\n";
+      return;
+    }
+
+    perform_swap_rbj_dagger();
+    apply_M_hopping(lhs, rhs);
+    perform_swap_rbj_dagger();
+  }
+  
+  // void apply_M_rbj_dagger_twolink(complex<double>* lhs, complex<double>* rhs);
+  // void apply_M_rbj_dagger_corner(complex<double>* lhs, complex<double>* rhs);
+
+  void apply_M_rbj_dagger_shift(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger_shift, but the right jacobi dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    perform_swap_rbj_dagger();
+    apply_M_shift(lhs, rhs);
+    perform_swap_rbj_dagger();
+  }
+
+  void apply_M_rbj_dagger(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbj_dagger, but the right jacobi dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    perform_swap_rbj_dagger();
+    apply_M(lhs, rhs);
+    perform_swap_rbj_dagger();
+  }
+
+  ////////////////////////////////////////////
+  // RIGHT JACOBI NORMAL EQUATION FUNCTIONS //
+  ////////////////////////////////////////////
+
+  void apply_M_rbjacobi_MDM(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbjacobi_MDM, but the right jacobi stencil has not been built.\n";
+      return;
+    }
+
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbjacobi_MDM, but the right jacobi dagger stencil has not been built.\n";
+      return;
+    }
+
+    zero_vector(extra_cvector, lat->get_size_cv());
+    apply_M_rbjacobi(extra_cvector, rhs);
+    apply_M_rbj_dagger(lhs, extra_cvector);
+  }
+
+  void prepare_M_rbjacobi_MDM(complex<double>* Mdagger_b, complex<double>* b)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call prepare_M_rbjacobi_MDM, but the right jacobi stencil has not been built.\n";
+      return;
+    }
+
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call prepare_M_rbjacobi_MDM, but the right jacobi dagger stencil has not been built.\n";
+      return;
+    }
+
+    apply_M_rbj_dagger(Mdagger_b, b);
+  }
+
+  // Reconstruct right block jacobi solve, which is just applying the above function.
+  void reconstruct_M_rbjacobi_MDM(complex<double>* x, complex<double>* y)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_rbjacobi_MDM, but the rbjacobi stencil has not been allocated.\n";
+      return;
+    }
+
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_rbjacobi_MDM, but the right jacobi dagger stencil has not been built.\n";
+      return;
+    }
+
+    apply_M_rbjacobi_cinv(x, y);
+  }
+
+  void apply_M_rbjacobi_MMD(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbjacobi_MMD, but the right jacobi stencil has not been built.\n";
+      return;
+    }
+
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_rbjacobi_MMD, but the right jacobi dagger stencil has not been built.\n";
+      return;
+    }
+
+    zero_vector(extra_cvector, lat->get_size_cv());
+    apply_M_rbj_dagger(extra_cvector, rhs);
+    apply_M_rbjacobi(lhs, extra_cvector);
+  }
+
+  void reconstruct_M_rbjacobi_MMD(complex<double>* x, complex<double>* y)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_rbjacobi_MMD, but the right jacobi stencil has not been built.\n";
+      return;
+    }
+
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_rbjacobi_MMD, but the right jacobi dagger stencil has not been built.\n";
+      return;
+    }
+
+    zero_vector(x, lat->get_size_cv());
+    apply_M_rbj_dagger(x, y);
+    zero_vector(extra_cvector, lat->get_size_cv());
+    apply_M_rbjacobi_cinv(extra_cvector, x);
+    copy_vector(x, extra_cvector, lat->get_size_cv());
+  }
+
+
   //////////////////////////
   // CONVENIENT FUNCTIONS //
   //////////////////////////
@@ -1771,6 +2201,15 @@ public:
         break;
       case QMG_MATVEC_MDAGGER_M:
         apply_M_dagger_M(lhs, rhs);
+        break;
+      case QMG_MATVEC_RBJ_DAGGER:
+        apply_M_rbj_dagger(lhs, rhs);
+        break;
+      case QMG_MATVEC_RBJ_M_MDAGGER:
+        apply_M_rbjacobi_MMD(lhs, rhs);
+        break;
+      case QMG_MATVEC_RBJ_MDAGGER_M:
+        apply_M_rbjacobi_MDM(lhs, rhs);
         break;
       default:
         cout << "[QMG-ERROR]: Tried to call apply_M with invalid stencil type.\n";
@@ -1800,6 +2239,15 @@ public:
       case QMG_MATVEC_MDAGGER_M:
         prepare_M_dagger_M(b_prep, b);
         break;
+      case QMG_MATVEC_RBJ_DAGGER:
+        copy_vector(b_prep, b, lat->get_size_cv());
+        break;
+      case QMG_MATVEC_RBJ_M_MDAGGER:
+        copy_vector(b_prep, b, lat->get_size_cv());
+        break;
+      case QMG_MATVEC_RBJ_MDAGGER_M:
+        prepare_M_rbjacobi_MDM(b_prep, b);
+        break;
       default:
         cout << "[QMG-ERROR]: Tried to call prepare_M with invalid stencil type.\n";
         break;
@@ -1827,6 +2275,15 @@ public:
         break;
       case QMG_MATVEC_MDAGGER_M:
         copy_vector(x, y, lat->get_size_cv());
+        break;
+      case QMG_MATVEC_RBJ_DAGGER:
+        copy_vector(x, y, lat->get_size_cv());
+        break;
+      case QMG_MATVEC_RBJ_M_MDAGGER:
+        reconstruct_M_rbjacobi_MMD(x, y);
+        break;
+      case QMG_MATVEC_RBJ_MDAGGER_M:
+        reconstruct_M_rbjacobi_MDM(x, y);
         break;
       default:
         cout << "[QMG-ERROR]: Tried to call reconstruct_M with invalid stencil type.\n";
@@ -1856,6 +2313,15 @@ public:
         break;
       case QMG_MATVEC_MDAGGER_M:
         return apply_stencil_2D_M_dagger_M;
+        break;
+      case QMG_MATVEC_RBJ_DAGGER:
+        return apply_stencil_2D_M_rbj_dagger;
+        break;
+      case QMG_MATVEC_RBJ_M_MDAGGER:
+        return apply_stencil_2D_M_rbjacobi_MMD;
+        break;
+      case QMG_MATVEC_RBJ_MDAGGER_M:
+        return apply_stencil_2D_M_rbjacobi_MDM;
         break;
       default:
         cout << "[QMG-ERROR]: Tried to call get_apply_function with invalid stencil type.\n";
@@ -1950,6 +2416,52 @@ void apply_stencil_2D_M_rbjacobi_schur(complex<double>* lhs, complex<double>* rh
   }
   zero_vector(lhs, stenc->lat->get_size_cv()/2);
   stenc->apply_M_rbjacobi_schur(lhs, rhs); // lhs = M rhs
+}
+
+void apply_stencil_2D_M_rbj_dagger(complex<double>* lhs, complex<double>* rhs, void* extra_data)
+{
+  Stencil2D* stenc = (Stencil2D*)extra_data;
+  if (!stenc->built_rbj_dagger)
+  {
+    std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_rbj_dagger, but the rbjacobi dagger stencil has not been built.\n";
+    return;
+  }
+  zero_vector(lhs, stenc->lat->get_size_cv());
+  stenc->apply_M_rbj_dagger(lhs, rhs); // lhs = M rhs
+}
+
+void apply_stencil_2D_M_rbjacobi_MMD(complex<double>* lhs, complex<double>* rhs, void* extra_data)
+{
+  Stencil2D* stenc = (Stencil2D*)extra_data;
+  if (!stenc->built_rbjacobi)
+  {
+    std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_rbjacobi_MMD, but the rbjacobi stencil has not been built.\n";
+    return;
+  }
+  if (!stenc->built_rbj_dagger)
+  {
+    std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_rbjacobi_MMD, but the rbjacobi dagger stencil has not been built.\n";
+    return;
+  }
+  zero_vector(lhs, stenc->lat->get_size_cv());
+  stenc->apply_M_rbjacobi_MMD(lhs, rhs); // lhs = M rhs
+}
+
+void apply_stencil_2D_M_rbjacobi_MDM(complex<double>* lhs, complex<double>* rhs, void* extra_data)
+{
+  Stencil2D* stenc = (Stencil2D*)extra_data;
+  if (!stenc->built_rbjacobi)
+  {
+    std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_rbjacobi_MDM, but the rbjacobi stencil has not been built.\n";
+    return;
+  }
+  if (!stenc->built_rbj_dagger)
+  {
+    std::cout << "[QMG-WARNING]: Tried to call apply_stencil_2D_M_rbjacobi_MDM, but the rbjacobi dagger stencil has not been built.\n";
+    return;
+  }
+  zero_vector(lhs, stenc->lat->get_size_cv());
+  stenc->apply_M_rbjacobi_MDM(lhs, rhs); // lhs = M rhs
 }
 
 #endif // QMG_STENCIL_2D
