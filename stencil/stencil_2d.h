@@ -863,9 +863,6 @@ public:
   {
     copy_vector(g5_vec, vec, lat->get_size_cv());
   }
-
-  // Apply gamma5
-
   // A few ways to perform chiral projections.
 
   // In place project onto up (true), down (false)
