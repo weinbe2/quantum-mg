@@ -46,6 +46,8 @@ public:
     QMG_COARSE_BUILD_DAGGER = 1, // also build dagger stencil
     QMG_COARSE_BUILD_RBJACOBI = 2, // also build rbjacobi stencil
     QMG_COARSE_BUILD_DAGGER_RBJACOBI = 3, // build both dagger, rbjacobi stencil.
+    QMG_COARSE_BUILD_RBJDAGGER = 4, // build rbjacobi and rbjacobi dagger stencil.
+    QMG_COARSE_BUILD_ALL = 5, // build all types of stencils
   };
 
 public:
@@ -410,14 +412,19 @@ public:
 
     // Build dagger, rbjacobi stencils
 
-    if (build_extra == QMG_COARSE_BUILD_DAGGER || build_extra == QMG_COARSE_BUILD_DAGGER_RBJACOBI)
+    if (build_extra == QMG_COARSE_BUILD_DAGGER || build_extra == QMG_COARSE_BUILD_DAGGER_RBJACOBI || build_extra == QMG_COARSE_BUILD_ALL)
     {
       build_dagger_stencil();
     }
 
-    if (build_extra == QMG_COARSE_BUILD_RBJACOBI || build_extra == QMG_COARSE_BUILD_DAGGER_RBJACOBI)
+    if (build_extra == QMG_COARSE_BUILD_RBJACOBI || build_extra == QMG_COARSE_BUILD_DAGGER_RBJACOBI || build_extra == QMG_COARSE_BUILD_RBJDAGGER || build_extra == QMG_COARSE_BUILD_ALL)
     {
       build_rbjacobi_stencil();
+    }
+
+    if (build_extra == QMG_COARSE_BUILD_RBJDAGGER || build_extra == QMG_COARSE_BUILD_ALL)
+    {
+      build_rbj_dagger_stencil();
     }
 
     // Still need to coarsen in 2-link, corner terms...
