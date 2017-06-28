@@ -13,6 +13,7 @@
 // QLINALG
 #include "blas/generic_vector.h"
 #include "inverters/generic_gcr.h"
+#include "inverters/generic_minres.h"
 #include "inverters/generic_gcr_var_precond.h"
 
 // QMG
@@ -610,7 +611,8 @@ public:
     // Solve A z1 = rhs, form new residual r1 = rhs - A z1
     complex<double>* z1 = fine_storage->check_out();
     zero_vector(z1, fine_size);
-    invif = minv_vector_gcr_restart(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_fine_M, (void*)fine_stencil);
+    //invif = minv_vector_gcr_restart(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_fine_M, (void*)fine_stencil);
+    invif = minv_vector_minres(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, 0.85, apply_fine_M, (void*)fine_stencil);
     zero_vector(Atmp, fine_size);
     fine_stencil->apply_M(Atmp, z1, fine_stencil_type);
     mg_object->add_tracker_count(QMG_DSLASH_TYPE_PRESMOOTH, invif.ops_count+1, level); // smoother ops + residual. 
@@ -676,6 +678,7 @@ public:
     zero_vector(e_coarse_reconstruct, coarse_size);
     coarse_stencil->reconstruct_M(e_coarse_reconstruct, e_coarse, r_coarse, coarse_stencil_type);
 
+
     /*complex<double>* tmp = coarse_storage->check_out();
     zero_vector(tmp, coarse_size);
     coarse_stencil->apply_M(tmp, e_coarse_reconstruct);
@@ -701,7 +704,8 @@ public:
     caxpbyz(1.0, rhs, -1.0, Atmp, r2, fine_size_solve);
     complex<double>* z3 = fine_storage->check_out();
     zero_vector(z3, fine_size);
-    invif = minv_vector_gcr(z3, r2, fine_size_solve, n_post_smooth, post_smooth_tol, apply_fine_M, (void*)fine_stencil);
+    //invif = minv_vector_gcr(z3, r2, fine_size_solve, n_post_smooth, post_smooth_tol, apply_fine_M, (void*)fine_stencil);
+    invif = minv_vector_minres(z3, r2, fine_size_solve, n_post_smooth, post_smooth_tol, 0.85, apply_fine_M, (void*)fine_stencil);
     mg_object->add_tracker_count(QMG_DSLASH_TYPE_POSTSMOOTH, invif.ops_count+1, level); // smoother ops + residual
     cxpy(z3, lhs, fine_size_solve);
 
