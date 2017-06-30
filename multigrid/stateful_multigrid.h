@@ -388,7 +388,6 @@ public:
   // Overloaded version of pop_level which also pops the level_solve_list.
   void pop_level()
   {
-    MultigridMG::pop_level();
 
     // Pop level solve info.
     level_solve_list.pop_back();
@@ -401,6 +400,8 @@ public:
       delete dslash_tracker_list[i];
       dslash_tracker_list.pop_back();
     }
+
+    MultigridMG::pop_level();
 
   }
 

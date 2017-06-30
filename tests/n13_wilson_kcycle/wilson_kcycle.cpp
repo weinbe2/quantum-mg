@@ -40,7 +40,7 @@ int main(int argc, char** argv)
   const bool do_free = false;
 
   // Check the spectrum?
-  const bool do_spectrum = true;
+  const bool do_spectrum = false;
 
   // Set output precision to be long.
   cout << setprecision(20);
@@ -86,7 +86,7 @@ int main(int argc, char** argv)
   const int n_refine = 1; // (64 -> 16 -> 4 -> 1)
 
   // Information about the outermost solve.
-  const double tol = 1e-8; 
+  const double tol = 1e-10; 
   const int max_iter = 1000;
   const int restart_freq = 32;
 
