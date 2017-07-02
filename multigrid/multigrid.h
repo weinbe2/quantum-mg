@@ -371,6 +371,90 @@ public:
     num_levels--;
   }
 
+  // A function to update a level. Sort of good blend of push and pop level.
+  void update_level(int level, Lattice2D* new_lat, TransferMG* new_transfer, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, CoarseOperator2D::QMGCoarseBuildStencil build_extra = CoarseOperator2D::QMG_COARSE_BUILD_ORIGINAL, complex<double>** nvecs = 0)
+  {
+    // Safely clean up a level.
+    if (level < 1 || level > num_levels)
+    {
+      std::cout << "[QMG-ERROR]: In MultigridMG::update_level, cannot update level " << level << " as it does not exist yet anyway.\n";
+      return;
+    }
+
+    // Deallocate vectors.
+    if (storage_list[level] != 0)
+    {
+      delete storage_list[level];
+    }
+
+    // Clean up stencils that this class created.
+    if (is_stencil_managed[level] && stencil_list[level] != 0)
+    {
+      delete stencil_list[level];
+    }
+
+    // Safely clean up null vectors.
+    int num_null = lattice_list[level-1]->get_nc();
+    if (global_null_vectors[level-1] != 0)
+    {
+      for (int j = 0; j < num_null; j++)
+      {
+        if (global_null_vectors[level-1][j] != 0)
+        {
+          deallocate_vector(&global_null_vectors[level-1][j]);
+        }
+      }
+      delete[] global_null_vectors[level-1];
+    }
+
+    // Update new lattice.
+    lattice_list[level] = new_lat;
+
+    // Update transfer object.
+    transfer_list[level-1] = new_transfer;
+
+    // Prepare temporary storage. Six is a good starting point.
+    storage_list[level] = new ArrayStorageMG<complex<double>>(new_lat->get_size_cv(), 6);
+
+    // Deal with stencil.
+    if (build_stencil)
+    {
+      stencil_list[level] = new CoarseOperator2D(new_lat, stencil_list[level-1], lattice_list[level-1], new_transfer, is_chiral, (build_stencil_from == QMG_MULTIGRID_PRECOND_ORIGINAL) ? false : true, build_extra);
+      is_stencil_managed[level] = true;
+    }
+    else
+    {
+      stencil_list[level] = 0;
+      is_stencil_managed[level] = false;
+    }
+
+    // Copy global null vectors, if they're non-zero.
+    if (nvecs != 0)
+    {
+      global_null_vectors[level-1] = new complex<double>*[new_lat->get_nc()];
+      for (int j = 0; j < new_lat->get_nc(); j++)
+      {
+        if (nvecs[j] != 0)
+        {
+          // We do NOT want these to come from the ArrayStorageMG class.
+          complex<double>* tmp = allocate_vector<complex<double>>(lattice_list[level-1]->get_size_cv());
+          copy_vector(tmp, nvecs[j], lattice_list[level-1]->get_size_cv());
+          global_null_vectors[level-1][j] = tmp;
+        }
+      }
+    }
+    else
+    {
+      global_null_vectors[level-1] = 0;
+    }
+  }
+
+  // A flavor that only builds the original coarse operator, not the dagger or rbjacobi.
+  void update_level(int level, Lattice2D* new_lat, TransferMG* new_transfer, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, complex<double>** nvecs = 0)
+  {
+    update_level(level, new_lat, new_transfer, build_stencil, is_chiral, build_stencil_from, CoarseOperator2D::QMG_COARSE_BUILD_ORIGINAL, nvecs);
+  }
+
 
   // A function that applies the stencil at a given level. Will apply
   // the stencil if it exists, otherwise it'll "emulate" it via

@@ -144,6 +144,19 @@ public:
       iterations += accum;
     }
 
+    // Add all non-nullvec counts into null vecs. Relevant for
+    // adaptive setups.
+    void shift_all_to_nullvec()
+    {
+      tracker[QMG_DSLASH_TYPE_NULLVEC] += tracker[QMG_DSLASH_TYPE_KRYLOV];
+      tracker[QMG_DSLASH_TYPE_KRYLOV] = 0;
+      tracker[QMG_DSLASH_TYPE_NULLVEC] += tracker[QMG_DSLASH_TYPE_PRESMOOTH];
+      tracker[QMG_DSLASH_TYPE_PRESMOOTH] = 0;
+      tracker[QMG_DSLASH_TYPE_NULLVEC] += tracker[QMG_DSLASH_TYPE_POSTSMOOTH];
+      tracker[QMG_DSLASH_TYPE_POSTSMOOTH] = 0;
+      iterations = 0;
+    }
+
     // get_count
     int get_tracker_count(QMGDslashType type)
     {
@@ -405,6 +418,34 @@ public:
 
   }
 
+  // A function to update a level. Sort of good blend of push and pop level.
+  void update_level(int level, Lattice2D* new_lat, TransferMG* new_transfer, LevelSolveMG* in_solve, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, CoarseOperator2D::QMGCoarseBuildStencil build_extra = CoarseOperator2D::QMG_COARSE_BUILD_ORIGINAL, complex<double>** nvecs = 0)
+  {
+    // Push the level info. An outer solve can only
+    // be QMG_MATVEC_ORIGINAL, QMG_MATVEC_RIGHT_JACOBI, QMG_MATVEC_RIGHT_SCHUR.
+    if (in_solve->fine_stencil_app != QMG_MATVEC_ORIGINAL &&
+          in_solve->fine_stencil_app != QMG_MATVEC_RIGHT_JACOBI &&
+          in_solve->fine_stencil_app != QMG_MATVEC_RIGHT_SCHUR)
+    {
+      std::cout << "[QMG-ERROR]: In StatefulMultigridMG:;update_level, LevelSolveMG::fine_stencil_app should only be original, right jacobi, or schur.\n";
+      return; 
+    }
+
+    MultigridMG::update_level(level, new_lat, new_transfer, build_stencil, is_chiral, build_stencil_from, build_extra, nvecs);
+
+    
+    // Update level solve.
+    level_solve_list[level-1] = in_solve;
+
+    // Preserve the dslash_tracker!
+
+  }
+
+  void update_level(int level, Lattice2D* new_lat, TransferMG* new_transfer, LevelSolveMG* in_solve, bool build_stencil = false, bool is_chiral = false, QMGMultigridPrecondStencil build_stencil_from = QMG_MULTIGRID_PRECOND_ORIGINAL, complex<double>** nvecs = 0)
+  {
+    update_level(level, new_lat, new_transfer, in_solve, build_stencil, is_chiral, build_stencil_from, CoarseOperator2D::QMG_COARSE_BUILD_ORIGINAL, nvecs);
+  }
+
   // Update the track at a given level.
   void add_tracker_count(QMGDslashType type, int accum, int i)
   {
@@ -428,6 +469,20 @@ public:
     else
     {
       cout << "[QMG-ERROR]: Out of range: Cannot update tracker at level " << i << ".\n";
+    }
+  }
+
+  // Add all non-nullvec counts into null vecs. Relevant for
+  // adaptive setups.
+  void shift_all_to_nullvec(int i)
+  {
+    if (i >= 0 && i < num_levels)
+    {
+      dslash_tracker_list[i]->shift_all_to_nullvec();
+    }
+    else
+    {
+      cout << "[QMG-ERROR]: Out of range: Cannot shift to null vectors at level " << i << ".\n";
     }
   }
 

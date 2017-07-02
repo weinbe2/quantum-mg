@@ -31,12 +31,15 @@ using namespace std;
 #include "operators/wilson.h"
 #include "u1/u1_utils.h"
 
+// Build new coarse levels by restricting+relaxing test vectors from upper levels.
+// See better documentation below.
+TransferMG* build_coarse_by_restrict(StatefulMultigridMG* mg_object, complex<double>*** test_vectors, int fine_level, Lattice2D* coarse_lat, StatefulMultigridMG::LevelSolveMG* new_level_solve, bool fresh_build, std::mt19937& generator, inversion_verbose_struct verb);
 
 int main(int argc, char** argv)
 {
-  if (argc != 5)
+  if (argc != 6)
   {
-    std::cout << "Error: ./wilson_kcycle expects four arguments, L, mass, beta, and n_refine. Try mass = -0.075 for beta 6.0.\n";
+    std::cout << "Error: ./wilson_kcycle expects five arguments, L, mass, beta, n_refine, and n_setup. Try mass = -0.075 for beta 6.0.\n";
     return -1;
   }
 
@@ -71,15 +74,8 @@ int main(int argc, char** argv)
   // How many times to refine. 
   const int n_refine = stoi(argv[4]);
 
-  // Temporary for iterative solve.
-  if (n_refine != 1 && n_refine != 2)
-  {
-    std::cout << "Only testing two or three level solve for now.\n";
-    return -1;
-  }
-
   // Number of setup iterations.
-  const int n_setup = 3;
+  const int n_setup = stoi(argv[5]);
 
   // Information about the outermost solve.
   const double tol = 1e-10; 
@@ -240,6 +236,31 @@ int main(int argc, char** argv)
 
     // Create space for test vectors.
     test_vectors[fine_idx] = new complex<double>*[coarse_dof/2];
+    for (j = 0; j < coarse_dof/2; j++)
+    {
+      test_vectors[fine_idx][j] = allocate_vector<complex<double> >(lats[fine_idx]->get_size_cv());
+      zero_vector(test_vectors[fine_idx][j], lats[fine_idx]->get_size_cv());
+    }
+
+    // Zero out transfer object.
+    transfer_objs[fine_idx] = 0;
+
+    // Prepare a new LevelSolveMG object for each level.
+    level_solve_objs[fine_idx] = new StatefulMultigridMG::LevelSolveMG;
+    level_solve_objs[fine_idx]->fine_stencil_app = QMG_MATVEC_ORIGINAL;
+    level_solve_objs[fine_idx]->intermediate_tol = inner_tol;
+    level_solve_objs[fine_idx]->intermediate_iters = inner_max_iter;
+    level_solve_objs[fine_idx]->intermediate_restart_freq = inner_restart_freq;
+    level_solve_objs[fine_idx]->pre_tol = pre_smooth_tol;
+    level_solve_objs[fine_idx]->pre_iters = n_pre_smooth;
+    level_solve_objs[fine_idx]->post_tol = post_smooth_tol;
+    level_solve_objs[fine_idx]->post_iters = n_post_smooth;
+  }
+
+  // Throw and relax initial test vectors.
+  {
+    const int fine_idx = 0;
+    const int coarse_idx = 1;
 
     // Create a new null vectors. These are copied into local memory in the
     // transfer object, so we can create and destroy these in this loop.
@@ -252,29 +273,16 @@ int main(int argc, char** argv)
       verb.verb_prefix = "Level " + to_string(fine_idx) + " Init, Null Vector " + to_string(j) + " ";
 
       // Will become up chiral projection
-      test_vectors[fine_idx][j] = allocate_vector<complex<double> >(lats[fine_idx]->get_size_cv());
       null_vectors[j] = allocate_vector<complex<double> >(lats[fine_idx]->get_size_cv());
       null_vectors[j+coarse_dof/2] = allocate_vector<complex<double> >(lats[fine_idx]->get_size_cv());
-      zero_vector(test_vectors[fine_idx][j], lats[fine_idx]->get_size_cv());
       zero_vector(null_vectors[j], lats[fine_idx]->get_size_cv());
       zero_vector(null_vectors[j+coarse_dof/2], lats[fine_idx]->get_size_cv());
 
       // Grab a temporary.
       complex<double>* temp_rand = mg_object->get_storage(fine_idx)->check_out();
 
-      // Fill with random numbers if on the top level, or restrict level up vectors.
-      if (i == 0)
-      {
-        gaussian(temp_rand, lats[fine_idx]->get_size_cv(), generator);
-        //for (k = 0; k < j; k++)
-        //  orthogonal(temp_rand, test_vectors[fine_idx][k], lats[fine_idx]->get_size_cv());
-        //normalize(temp_rand, lats[fine_idx]->get_size_cv());
-      }
-      else
-      {
-        zero_vector(temp_rand, lats[fine_idx]->get_size_cv());
-        mg_object->get_transfer(fine_idx-1)->restrict_f2c(test_vectors[fine_idx-1][j], temp_rand);
-      }
+      // Fill with random numbers on the top level.
+      gaussian(temp_rand, lats[fine_idx]->get_size_cv(), generator);
 
       // Smooth with MR, 10 hits.
       invif = minv_vector_richardson(test_vectors[fine_idx][j], temp_rand, lats[fine_idx]->get_size_cv(), 10, 1e-10, 0.33, 50, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
@@ -298,17 +306,6 @@ int main(int argc, char** argv)
     // Fine lattice, coarse lattice, null vector(s), perform the block ortho.
     transfer_objs[fine_idx] = new TransferMG(lats[fine_idx], lats[coarse_idx], null_vectors, true);
 
-    // Prepare a new LevelSolveMG object for the new level.
-    level_solve_objs[fine_idx] = new StatefulMultigridMG::LevelSolveMG;
-    level_solve_objs[fine_idx]->fine_stencil_app = QMG_MATVEC_ORIGINAL;
-    level_solve_objs[fine_idx]->intermediate_tol = inner_tol;
-    level_solve_objs[fine_idx]->intermediate_iters = inner_max_iter;
-    level_solve_objs[fine_idx]->intermediate_restart_freq = inner_restart_freq;
-    level_solve_objs[fine_idx]->pre_tol = pre_smooth_tol;
-    level_solve_objs[fine_idx]->pre_iters = n_pre_smooth;
-    level_solve_objs[fine_idx]->post_tol = post_smooth_tol;
-    level_solve_objs[fine_idx]->post_iters = n_post_smooth;
-
     // Push a new level on the multigrid object! Also, save the global null vector.
     // Arg 1: New lattice
     // Arg 2: New transfer object (between new and prev lattice)
@@ -323,6 +320,15 @@ int main(int argc, char** argv)
     for (j = 0; j < coarse_dof; j++)
       deallocate_vector(&null_vectors[j]);
     delete[] null_vectors;
+  }
+
+  // Prepare initial levels.
+  for (i = 1; i < n_refine; i++)
+  {
+    const int fine_idx = i;
+    const int coarse_idx = i+1;
+
+    transfer_objs[fine_idx] = build_coarse_by_restrict(mg_object, test_vectors, fine_idx, lats[coarse_idx], level_solve_objs[fine_idx], true, generator, verb);
   }
 
   // Alright, initial setup is done. Let's do a setup update.
@@ -358,11 +364,11 @@ int main(int argc, char** argv)
         }
         else
         {
-          zero_vector(test_vectors[fine_idx][j], lats[fine_idx]->get_size_cv());
           zero_vector(temp_rand, lats[fine_idx]->get_size_cv());
           mg_object->get_transfer(fine_idx-1)->restrict_f2c(test_vectors[fine_idx-1][j], temp_rand);
         }
 
+        zero_vector(test_vectors[fine_idx][j], lats[fine_idx]->get_size_cv());
         invif = minv_vector_gcr_var_precond(test_vectors[fine_idx][j], temp_rand, lats[fine_idx]->get_size_cv(),
               10, 1e-10,
               apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx),
@@ -385,22 +391,43 @@ int main(int argc, char** argv)
         std::cout << "\n";
       }
 
-      // Need to rebuild just a single level... hm.
-
-      // Rebuild mg solve.
-      mg_object->pop_level();
+      // Build a new transfer object,
       delete transfer_objs[fine_idx];
-
-      // Create and populate a transfer object.
-      // Fine lattice, coarse lattice, null vector(s), perform the block ortho.
       transfer_objs[fine_idx] = new TransferMG(lats[fine_idx], lats[coarse_idx], null_vectors, true);
 
-      mg_object->push_level(lats[coarse_idx], transfer_objs[fine_idx], level_solve_objs[fine_idx], true, true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
+      // Update a level.
+      mg_object->update_level(coarse_idx, lats[coarse_idx], transfer_objs[fine_idx], level_solve_objs[fine_idx], true, true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
+
+      // Rebuild all lower levels.
+      for (j = i+1; j < n_refine; j++)
+      {
+        const int fine_idx = j;
+        const int coarse_idx = j+1;
+
+        delete transfer_objs[fine_idx];
+        transfer_objs[fine_idx] = build_coarse_by_restrict(mg_object, test_vectors, fine_idx, lats[coarse_idx], level_solve_objs[fine_idx], false, generator, verb);
+      }
 
       for (j = 0; j < coarse_dof; j++)
         deallocate_vector(&null_vectors[j]);
       delete[] null_vectors;
+
+      // Need to rebuild all lower levels, too. I guess I can just pop instead of updating.
+
+      // Go down a level.
+      if (i < n_refine-1)
+        mg_object->go_coarser();
     }
+
+    // Pop back up.
+    for (i = 0; i < n_refine-1; i++)
+      mg_object->go_finer();
+  }
+
+  // Shift tracker to null vector counts.
+  for (i = 0; i <= n_refine; i++)
+  {
+    mg_object->shift_all_to_nullvec(i);
   }
 
   // Prepare storage and a guess right hand side.
@@ -570,3 +597,91 @@ int main(int argc, char** argv)
   return 0;
 }
 
+
+// Build a new level by restricting then smoothing vectors
+// from a level up.
+// Arg 1: MG object.
+// Arg 2: the current fine level.
+// Arg 3: new coarse lattice. 
+// Arg 4: level solve object
+// Arg 5: if true: this is a fresh build of the new level. if false: need to do it via update.
+// Arg 6: random number generator.
+// Arg 7: verbosity object
+TransferMG* build_coarse_by_restrict(StatefulMultigridMG* mg_object, complex<double>*** test_vectors, int fine_level, Lattice2D* coarse_lat, StatefulMultigridMG::LevelSolveMG* new_level_solve, bool fresh_build, std::mt19937& generator, inversion_verbose_struct verb)
+{
+  int j,k;
+
+  const int fine_idx = fine_level;
+  const int coarse_idx = fine_level+1;
+  const int coarse_dof = coarse_lat->get_nc();
+  const int fine_size_cv = mg_object->get_lattice(fine_idx)->get_size_cv();
+
+  // Somewhere to solve inversion info.
+  inversion_info invif;
+
+  // Create a new null vectors. These are copied into local memory in the
+  // transfer object, so we can create and destroy these in this loop.
+  complex<double>** null_vectors = new complex<double>*[coarse_dof];
+
+  // First level of setup. Smooth restricted vectors.
+  for (j = 0; j < coarse_dof/2; j++)
+  {
+    // Update verbosity string.
+    verb.verb_prefix = "Level " + to_string(fine_idx) + " Init, Null Vector " + to_string(j) + " ";
+
+    // Will become up chiral projection
+    null_vectors[j] = allocate_vector<complex<double> >(fine_size_cv);
+    null_vectors[j+coarse_dof/2] = allocate_vector<complex<double> >(fine_size_cv);
+    zero_vector(null_vectors[j], fine_size_cv);
+    zero_vector(null_vectors[j+coarse_dof/2], fine_size_cv);
+
+    // Grab a temporary.
+    complex<double>* temp_rand = mg_object->get_storage(fine_idx)->check_out();
+
+    // Fill with random numbers on the top level.
+    gaussian(temp_rand, fine_size_cv, generator);
+
+    // Smooth with MR, 10 hits.
+    invif = minv_vector_richardson(test_vectors[fine_idx][j], temp_rand, fine_size_cv, 10, 1e-10, 0.33, 50, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
+    //invif = minv_vector_gcr(test_vectors[fine_idx][j], temp_rand, fine_size_cv, 500, 0.2, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
+    //invif = minv_vector_minres(test_vectors[fine_idx][j], temp_rand, fine_size_cv, 10, 1e-15, 0.66, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
+    mg_object->add_tracker_count(QMG_DSLASH_TYPE_NULLVEC, invif.ops_count, fine_idx);
+    mg_object->get_storage(fine_idx)->check_in(temp_rand);
+
+    // Orthogonalize against previous vectors.
+    for (k = 0; k < j; k++)
+      orthogonal(test_vectors[fine_idx][j], test_vectors[fine_idx][k], fine_size_cv);
+
+    normalize(test_vectors[fine_idx][j], fine_size_cv);
+    copy_vector(null_vectors[j], test_vectors[fine_idx][j], fine_size_cv);
+    mg_object->get_stencil(fine_idx)->chiral_projection_both(null_vectors[j], null_vectors[j+coarse_dof/2]);
+  }
+
+  // Build a new transfer object.
+  TransferMG* transfer_obj = new TransferMG(mg_object->get_lattice(fine_idx), coarse_lat, null_vectors, true);
+
+  if (fresh_build)
+  {
+    // Push a new level on the multigrid object! Also, save the global null vector.
+    // Arg 1: New lattice
+    // Arg 2: New transfer object (between new and prev lattice)
+    // Arg 3: Level solve object (specifies how to do intermediate solves and smooths)
+    // Arg 3: Should we construct the coarse stencil?
+    // Arg 4: Is the operator chiral? (True for Wilson)
+    // Arg 5: What should we construct the coarse stencil from? (Not relevant yet.)
+    // Arg 6: Non-block-orthogonalized null vector.
+    mg_object->push_level(coarse_lat, transfer_obj, new_level_solve, true, true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
+  }
+  else
+  {
+    // Update a level.
+    mg_object->update_level(coarse_idx, coarse_lat, transfer_obj, new_level_solve, true, true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);
+  }
+
+  // Clean up a bit.
+  for (j = 0; j < coarse_dof; j++)
+    deallocate_vector(&null_vectors[j]);
+  delete[] null_vectors;
+
+  return transfer_obj;
+}

@@ -35,6 +35,12 @@ int main(int argc, char** argv)
   // Iterators.
   int i,j,k;
 
+  if (argc != 5)
+  {
+    std::cout << "Error: ./wilson_kcycle expects four arguments, L, mass, beta, n_refine. Try mass = -0.075 for beta 6.0.\n";
+    return -1;
+  }
+
   // Are we testing the free (two exact null vectors) or
   // interacting (four algebraic null vectors) case?
   const bool do_free = false;
@@ -49,9 +55,9 @@ int main(int argc, char** argv)
   std::mt19937 generator (1337u);
 
   // Basic information for fine level.
-  const int x_len = 16;
-  const int y_len = 16;
-  const double beta = 6.0;
+  const int x_len = stoi(argv[1]);
+  const int y_len = stoi(argv[1]);
+  const double beta = stod(argv[3]); 
   const int dof = Wilson2D::get_dof();
 
   // Information on the Wilson operator.
@@ -64,7 +70,7 @@ int main(int argc, char** argv)
   {
     // Staggered specific information.
     // For 64^2, beta = 6.0, eigenvalues go negative around -0.075.
-    mass = -0.07;
+    mass = stod(argv[2]);
   }
 
   // Blocking size.
@@ -83,7 +89,7 @@ int main(int argc, char** argv)
   }
 
   // How many times to refine. 
-  const int n_refine = 1; // (64 -> 16 -> 4 -> 1)
+  const int n_refine = stoi(argv[4]); // (64 -> 16 -> 4 -> 1)
 
   // Information about the outermost solve.
   const double tol = 1e-10; 
