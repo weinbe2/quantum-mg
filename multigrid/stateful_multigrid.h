@@ -13,6 +13,7 @@
 // QLINALG
 #include "blas/generic_vector.h"
 #include "inverters/generic_gcr.h"
+#include "inverters/generic_bicgstab_l.h"
 #include "inverters/generic_minres.h"
 #include "inverters/generic_gcr_var_precond.h"
 
@@ -667,13 +668,21 @@ public:
     // Solve A z1 = rhs, form new residual r1 = rhs - A z1
     complex<double>* z1 = fine_storage->check_out();
     zero_vector(z1, fine_size);
-    //invif = minv_vector_gcr_restart(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_fine_M, (void*)fine_stencil);
-    invif = minv_vector_minres(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, 0.85, apply_fine_M, (void*)fine_stencil);
-    zero_vector(Atmp, fine_size);
-    fine_stencil->apply_M(Atmp, z1, fine_stencil_type);
-    mg_object->add_tracker_count(QMG_DSLASH_TYPE_PRESMOOTH, invif.ops_count+1, level); // smoother ops + residual. 
-    complex<double>* r1 = fine_storage->check_out();
-    caxpbyz(1.0, rhs, -1.0, Atmp, r1, fine_size_solve);
+    complex<double>* r1 = fine_storage->check_out(); // gets initialized in the next code block
+    if (n_pre_smooth > 0)
+    {
+      //invif = minv_vector_gcr_restart(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_fine_M, (void*)fine_stencil);
+      invif = minv_vector_minres(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, 0.85, apply_fine_M, (void*)fine_stencil);
+      zero_vector(Atmp, fine_size);
+      fine_stencil->apply_M(Atmp, z1, fine_stencil_type);
+      mg_object->add_tracker_count(QMG_DSLASH_TYPE_PRESMOOTH, invif.ops_count+1, level); // smoother ops + residual. 
+      caxpbyz(1.0, rhs, -1.0, Atmp, r1, fine_size_solve);
+    }
+    else
+    {
+      zero_vector(Atmp, fine_size_solve);
+      copy_vector(r1, rhs, fine_size_solve);
+    }
 
     // Next stop: restrict, prep for coarse solve, recurse (or coarsest solve), prolong.
     complex<double>* r_coarse = coarse_storage->check_out();
@@ -698,9 +707,15 @@ public:
       }
       else
       {
+        /*invif = minv_vector_bicgstab_l(e_coarse, r_coarse_prep, coarse_size_solve,
+                          coarse_max_iter, coarse_tol*rnorm/rnorm_prep, 6, 
+                          apply_coarse_M, (void*)coarse_stencil, &verb2);*/
         invif = minv_vector_gcr_restart(e_coarse, r_coarse_prep, coarse_size_solve,
                           coarse_max_iter, coarse_tol*rnorm/rnorm_prep, coarse_restart, 
                           apply_coarse_M, (void*)coarse_stencil, &verb2);
+        /*invif = minv_vector_cg_restart(e_coarse, r_coarse_prep, coarse_size_solve,
+                          coarse_max_iter, coarse_tol*rnorm/rnorm_prep, coarse_restart, 
+                          apply_coarse_M, (void*)coarse_stencil, &verb2);*/
       }
     }
     else

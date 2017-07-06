@@ -42,15 +42,15 @@ enum qmg_eo
 // in the first place. 
 
 // cshift function from even.
-template<typename T> void cshift_from_even(T* lhs, T* rhs, qmg_cshift_dir cdir, int dof_per_site, Lattice2D* lat)
+template<typename T> void cshift_from_even(T* lhs, T* rhs, qmg_cshift_dir cdir, const int dof_per_site, Lattice2D* lat)
 {
-  int dof = dof_per_site;
+  const int dof = dof_per_site;
   
-  int half_size = lat->get_volume()/2;
-  int half_size_dof = half_size*dof_per_site;
+  const int half_size = lat->get_volume()/2;
+  const int half_size_dof = half_size*dof_per_site;
 
-  int half_rowsize = lat->get_dim_mu(0)/2;
-  int half_rowsize_dof = half_rowsize*dof_per_site; 
+  const int half_rowsize = lat->get_dim_mu(0)/2;
+  const int half_rowsize_dof = half_rowsize*dof_per_site; 
   switch (cdir)
   {
     case QMG_CSHIFT_FROM_0:

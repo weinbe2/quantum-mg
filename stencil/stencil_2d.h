@@ -1776,7 +1776,7 @@ public:
 
     // Allocate if needed, zero the temporary vector. 
     if (eo_cvector == 0) { eo_cvector = allocate_vector<complex<double>>(lat->get_size_cv()); }
-    zero_vector(eo_cvector, lat->get_size_cv()/2); 
+    zero_vector(eo_cvector, lat->get_size_cv()); 
 
     // We'll form x_o first, since x_e is easy.
 
@@ -1784,7 +1784,7 @@ public:
     apply_M_rbjacobi_oe(eo_cvector, y_e);
 
     // Form b_o - D_{oe} D^{-1}_ee y_e
-    cxpay(b+lat->get_size_cv()/2, -1.0, x+lat->get_size_cv()/2, lat->get_size_cv()/2);
+    caxpbyz(1.0, b+lat->get_size_cv()/2, -1.0, eo_cvector+lat->get_size_cv()/2, x+lat->get_size_cv()/2, lat->get_size_cv()/2);
 
     // Copy y_e into eo_cvector so we can do the cinv in one pass.
     copy_vector(x, y_e, lat->get_size_cv()/2);
@@ -2135,6 +2135,24 @@ public:
     apply_M_rbjacobi_cinv(x, y);
   }
 
+  // Reconstruct right block jacobi solve, which is just applying the above function.
+  void reconstruct_M_rbjacobi_MDM_to_rbjacobi(complex<double>* x, complex<double>* y)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_rbjacobi_MDM, but the rbjacobi stencil has not been allocated.\n";
+      return;
+    }
+
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_rbjacobi_MDM, but the right jacobi dagger stencil has not been built.\n";
+      return;
+    }
+
+    copy_vector(y, x, lat->get_size_cv());
+  }
+
   void apply_M_rbjacobi_MMD(complex<double>* lhs, complex<double>* rhs)
   {
     if (!built_rbjacobi)
@@ -2173,6 +2191,25 @@ public:
     zero_vector(extra_cvector, lat->get_size_cv());
     apply_M_rbjacobi_cinv(extra_cvector, x);
     copy_vector(x, extra_cvector, lat->get_size_cv());
+  }
+
+  // Reconstruct right block jacobi solve, which is just applying the above function.
+  void reconstruct_M_rbjacobi_MMD_to_rbjacobi(complex<double>* x, complex<double>* y)
+  {
+    if (!built_rbjacobi)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_rbjacobi_MDM, but the rbjacobi stencil has not been allocated.\n";
+      return;
+    }
+
+    if (!built_rbj_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call reconstruct_M_rbjacobi_MDM, but the right jacobi dagger stencil has not been built.\n";
+      return;
+    }
+
+    zero_vector(x, lat->get_size_cv());
+    apply_M_rbj_dagger(x, y);
   }
 
 

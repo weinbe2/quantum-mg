@@ -248,9 +248,9 @@ int main(int argc, char** argv)
     // Prepare a new LevelSolveMG object for each level.
     level_solve_objs[fine_idx] = new StatefulMultigridMG::LevelSolveMG;
     level_solve_objs[fine_idx]->fine_stencil_app = QMG_MATVEC_ORIGINAL;
-    level_solve_objs[fine_idx]->intermediate_tol = inner_tol;
-    level_solve_objs[fine_idx]->intermediate_iters = inner_max_iter;
-    level_solve_objs[fine_idx]->intermediate_restart_freq = inner_restart_freq;
+    level_solve_objs[fine_idx]->intermediate_tol = 1e-10; //inner_tol;
+    level_solve_objs[fine_idx]->intermediate_iters = 8; //inner_max_iter;
+    level_solve_objs[fine_idx]->intermediate_restart_freq = 1024;//inner_restart_freq;
     level_solve_objs[fine_idx]->pre_tol = pre_smooth_tol;
     level_solve_objs[fine_idx]->pre_iters = n_pre_smooth;
     level_solve_objs[fine_idx]->post_tol = post_smooth_tol;
@@ -285,8 +285,9 @@ int main(int argc, char** argv)
       gaussian(temp_rand, lats[fine_idx]->get_size_cv(), generator);
 
       // Smooth with MR, 10 hits.
-      invif = minv_vector_richardson(test_vectors[fine_idx][j], temp_rand, lats[fine_idx]->get_size_cv(), 10, 1e-10, 0.33, 50, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
-      //invif = minv_vector_gcr(test_vectors[fine_idx][j], temp_rand, lats[fine_idx]->get_size_cv(), 500, 0.2, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
+      //minv_vector_bicgstab_l(test_vectors[fine_idx][j], temp_rand, lats[fine_idx]->get_size_cv(), 100, 1e-10, 8, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
+      invif = minv_vector_richardson(test_vectors[fine_idx][j], temp_rand, lats[fine_idx]->get_size_cv(), 10, 1e-10, 0.33, 250, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
+      //invif = minv_vector_gcr(test_vectors[fine_idx][j], temp_rand, lats[fine_idx]->get_size_cv(), 10, 1e-10, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
       //invif = minv_vector_minres(test_vectors[fine_idx][j], temp_rand, lats[fine_idx]->get_size_cv(), 10, 1e-15, 0.66, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
       mg_object->add_tracker_count(QMG_DSLASH_TYPE_NULLVEC, invif.ops_count, fine_idx);
       mg_object->get_storage(fine_idx)->check_in(temp_rand);
@@ -428,6 +429,23 @@ int main(int argc, char** argv)
   for (i = 0; i <= n_refine; i++)
   {
     mg_object->shift_all_to_nullvec(i);
+  }
+
+  // Do the actual solve differently from the setup.
+  // Initial setup. 
+  for (i = 0; i < n_refine; i++)
+  {
+    const int fine_idx = i; // Index the fine level.
+    const int coarse_idx = i+1; // Index the coarse level.
+
+    level_solve_objs[fine_idx]->fine_stencil_app = QMG_MATVEC_ORIGINAL;
+    level_solve_objs[fine_idx]->intermediate_tol = inner_tol;
+    level_solve_objs[fine_idx]->intermediate_iters = inner_max_iter;
+    level_solve_objs[fine_idx]->intermediate_restart_freq = inner_restart_freq;
+    level_solve_objs[fine_idx]->pre_tol = pre_smooth_tol;
+    level_solve_objs[fine_idx]->pre_iters = n_pre_smooth;
+    level_solve_objs[fine_idx]->post_tol = post_smooth_tol;
+    level_solve_objs[fine_idx]->post_iters = n_post_smooth;
   }
 
   // Prepare storage and a guess right hand side.
@@ -642,8 +660,9 @@ TransferMG* build_coarse_by_restrict(StatefulMultigridMG* mg_object, complex<dou
     gaussian(temp_rand, fine_size_cv, generator);
 
     // Smooth with MR, 10 hits.
-    invif = minv_vector_richardson(test_vectors[fine_idx][j], temp_rand, fine_size_cv, 10, 1e-10, 0.33, 50, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
-    //invif = minv_vector_gcr(test_vectors[fine_idx][j], temp_rand, fine_size_cv, 500, 0.2, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
+    //minv_vector_bicgstab_l(test_vectors[fine_idx][j], temp_rand, fine_size_cv, 100, 1e-10, 8, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
+    invif = minv_vector_richardson(test_vectors[fine_idx][j], temp_rand, fine_size_cv, 10, 1e-10, 0.33, 250, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
+    //invif = minv_vector_gcr(test_vectors[fine_idx][j], temp_rand, fine_size_cv, 10, 1e-10, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
     //invif = minv_vector_minres(test_vectors[fine_idx][j], temp_rand, fine_size_cv, 10, 1e-15, 0.66, apply_stencil_2D_M, (void*)mg_object->get_stencil(fine_idx), &verb);
     mg_object->add_tracker_count(QMG_DSLASH_TYPE_NULLVEC, invif.ops_count, fine_idx);
     mg_object->get_storage(fine_idx)->check_in(temp_rand);
