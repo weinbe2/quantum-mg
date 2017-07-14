@@ -15,6 +15,7 @@
 #include "inverters/generic_gcr.h"
 #include "inverters/generic_bicgstab_l.h"
 #include "inverters/generic_minres.h"
+#include "inverters/generic_richardson.h"
 #include "inverters/generic_gcr_var_precond.h"
 
 // QMG
@@ -698,24 +699,43 @@ public:
     zero_vector(e_coarse, coarse_size);
     if (level == total_num_levels-2) // if we're already on the coarsest level
     {
+      bool coarsest_normal = (coarse_stencil_type == QMG_MATVEC_M_MDAGGER ||
+                              coarse_stencil_type == QMG_MATVEC_MDAGGER_M ||
+                              coarse_stencil_type == QMG_MATVEC_RBJ_M_MDAGGER ||
+                              coarse_stencil_type == QMG_MATVEC_RBJ_MDAGGER_M);
       if (coarse_restart == -1)
       {
         // Need to add norm factor to get proper un-preperared norm.
-        invif = minv_vector_gcr(e_coarse, r_coarse_prep, coarse_size_solve,
-                          coarse_max_iter, coarse_tol*rnorm/rnorm_prep, 
-                          apply_coarse_M, (void*)coarse_stencil, &verb2);
+        if (!coarsest_normal)
+        {
+          invif = minv_vector_gcr(e_coarse, r_coarse_prep, coarse_size_solve,
+                            coarse_max_iter, coarse_tol*rnorm/rnorm_prep, 
+                            apply_coarse_M, (void*)coarse_stencil, &verb2);
+        }
+        else
+        {
+          invif = minv_vector_cg(e_coarse, r_coarse_prep, coarse_size_solve,
+                            coarse_max_iter, coarse_tol*rnorm/rnorm_prep, 
+                            apply_coarse_M, (void*)coarse_stencil, &verb2);
+        }
       }
       else
       {
         /*invif = minv_vector_bicgstab_l(e_coarse, r_coarse_prep, coarse_size_solve,
                           coarse_max_iter, coarse_tol*rnorm/rnorm_prep, 6, 
                           apply_coarse_M, (void*)coarse_stencil, &verb2);*/
-        invif = minv_vector_gcr_restart(e_coarse, r_coarse_prep, coarse_size_solve,
-                          coarse_max_iter, coarse_tol*rnorm/rnorm_prep, coarse_restart, 
-                          apply_coarse_M, (void*)coarse_stencil, &verb2);
-        /*invif = minv_vector_cg_restart(e_coarse, r_coarse_prep, coarse_size_solve,
-                          coarse_max_iter, coarse_tol*rnorm/rnorm_prep, coarse_restart, 
-                          apply_coarse_M, (void*)coarse_stencil, &verb2);*/
+        if (!coarsest_normal)
+        {
+          invif = minv_vector_gcr_restart(e_coarse, r_coarse_prep, coarse_size_solve,
+                            coarse_max_iter, coarse_tol*rnorm/rnorm_prep, coarse_restart, 
+                            apply_coarse_M, (void*)coarse_stencil, &verb2);
+        }
+        else
+        {
+          invif = minv_vector_cg_restart(e_coarse, r_coarse_prep, coarse_size_solve,
+                            coarse_max_iter, coarse_tol*rnorm/rnorm_prep, coarse_restart, 
+                            apply_coarse_M, (void*)coarse_stencil, &verb2);
+        }
       }
     }
     else
@@ -789,3 +809,5 @@ public:
   }
 
 };
+
+
