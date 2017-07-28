@@ -83,19 +83,19 @@ int main(int argc, char** argv)
       switch (x_len)
       {
         case 32:
-          read_gauge_u1(gauge_field, lat_gauge, "../cfgs/l32t32b60_heatbath.dat");
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l32t32b60_heatbath.dat");
           break;
         case 64:
-          read_gauge_u1(gauge_field, lat_gauge, "../cfgs/l64t64b60_heatbath.dat");
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l64t64b60_heatbath.dat");
           break;
         case 128:
-          read_gauge_u1(gauge_field, lat_gauge, "../cfgs/l128t128b60_heatbath.dat");
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l128t128b60_heatbath.dat");
           break;
         case 192:
-          read_gauge_u1(gauge_field, lat_gauge, "../cfgs/l192t192b60_heatbath.dat");
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l192t192b60_heatbath.dat");
           break;
         case 256:
-          read_gauge_u1(gauge_field, lat_gauge, "../cfgs/l256t256b60_heatbath.dat");
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l256t256b60_heatbath.dat");
           break;
         default:
           need_heatbath = true;
@@ -107,16 +107,16 @@ int main(int argc, char** argv)
       switch (x_len)
       {
         case 32:
-          read_gauge_u1(gauge_field, lat_gauge, "../cfgs/l32t32b100_heatbath.dat");
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l32t32b100_heatbath.dat");
           break;
         case 64:
-          read_gauge_u1(gauge_field, lat_gauge, "../cfgs/l64t64b100_heatbath.dat");
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l64t64b100_heatbath.dat");
           break;
         case 128:
-          read_gauge_u1(gauge_field, lat_gauge, "../cfgs/l128t128b100_heatbath.dat");
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l128t128b100_heatbath.dat");
           break;
         case 192:
-          read_gauge_u1(gauge_field, lat_gauge, "../cfgs/l192t192b100_heatbath.dat");
+          read_gauge_u1(gauge_field, lat_gauge, "../common_cfgs_u1/l192t192b100_heatbath.dat");
           break;
         default:
           need_heatbath = true;
