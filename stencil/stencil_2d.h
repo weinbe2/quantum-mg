@@ -187,6 +187,8 @@ public:
   complex<double>* rbj_dagger_twolink;
   complex<double>* rbj_dagger_corner;
 
+  complex<double>* rbj_dagger_cinv;
+
   // Base constructor
   Stencil2D(Lattice2D* in_lat, int pieces, complex<double> in_shift = 0.0, complex<double> in_eo_shift = 0.0, complex<double> in_dof_shift = 0.0)
     : lat(in_lat), shift(in_shift), eo_shift(in_eo_shift), dof_shift(in_dof_shift)
@@ -260,6 +262,7 @@ public:
     rbj_dagger_hopping = 0;
     rbj_dagger_twolink = 0;
     rbj_dagger_corner = 0;
+    rbj_dagger_cinv = 0;
 
     // Set swaps and backups.
     shift_backup = shift;
@@ -305,6 +308,7 @@ public:
     if (rbj_dagger_hopping != 0) { deallocate_vector(&rbj_dagger_hopping); }
     if (rbj_dagger_twolink != 0) { deallocate_vector(&rbj_dagger_twolink); }
     if (rbj_dagger_corner != 0) { deallocate_vector(&rbj_dagger_corner); }
+    if (rbj_dagger_cinv != 0) { deallocate_vector(&rbj_dagger_cinv); }
     built_rbjacobi = false; 
     
     generated = false; 
@@ -1818,6 +1822,12 @@ public:
     {
       rbj_dagger_clover = allocate_vector<complex<double>>(lat->get_size_cm());
       cMATcopy_conjtrans_square(rbjacobi_clover, rbj_dagger_clover, vol, nc);
+    }
+
+    if (rbjacobi_cinv != 0)
+    {
+      rbj_dagger_cinv = allocate_vector<complex<double>>(lat->get_size_cm());
+      cMATcopy_conjtrans_square(rbjacobi_cinv, rbj_dagger_cinv, vol, nc);
     }
       
     if (rbjacobi_hopping != 0)
