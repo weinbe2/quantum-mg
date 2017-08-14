@@ -124,6 +124,24 @@ public:
     zero_vector_blas(orig_to_up+1, 2, lat->get_size_cv()/2);
   }
 
+  // Apply sigma1 in place. Default does nothing.
+  virtual void sigma1(complex<double>* vec)
+  {
+    double scale[2] = { 1.0, 1.0 };
+    int shuffle[2] = { 1, 0 };
+    caxy_shuffle_pattern(scale, shuffle, 2, vec, extra_cvector, lat->get_volume());
+    copy_vector(vec, extra_cvector, lat->get_size_cv());
+    return;
+  }
+
+  // Apply sigma1 saved in a vector
+  virtual void sigma1(complex<double>* s1_vec, complex<double>* vec)
+  {
+    double scale[2] = { 1.0, 1.0 };
+    int shuffle[2] = { 1, 0 };
+    caxy_shuffle_pattern(scale, shuffle, 2, vec, s1_vec, lat->get_volume());
+  }
+
 };
 
 // update gauge links.

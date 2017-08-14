@@ -56,6 +56,16 @@ public:
   
   ~Lattice2D()
   {  }
+
+  void update_nc(int my_nc)
+  {
+    nc = my_nc;
+    size_cv = volume*nc;
+    size_cm = size_cv*nc;
+    size_gauge = size_cm*nd;
+    size_hopping = size_gauge*2;
+    size_corner = size_gauge*2; 
+  }
   
   /////////////////////////////////////////////////
   // FUNCTIONS TO GO FROM COORDINATES TO INDICES //

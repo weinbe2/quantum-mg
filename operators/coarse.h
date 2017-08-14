@@ -536,6 +536,41 @@ public:
     }
   }
 
+  // Apply sigma1 in place. Default does nothing.
+  virtual void sigma1(complex<double>* vec)
+  {
+    const int my_nc = lat->get_nc();
+    if (my_nc % 2) { return ; }
+    double scale[my_nc];
+    int shuffle[my_nc];
+    for (int i = 0; i < my_nc/2; i++)
+    {
+      scale[i] = 1.0;
+      scale[i+my_nc/2] = 1.0;
+      shuffle[i] = i+my_nc/2;
+      shuffle[i+my_nc/2] = i;
+    }
+    caxy_shuffle_pattern(scale, shuffle, my_nc, vec, extra_cvector, lat->get_volume());
+    copy_vector(vec, extra_cvector, lat->get_size_cv());
+  }
+
+  // Apply sigma1 saved in a vector
+  virtual void sigma1(complex<double>* s1_vec, complex<double>* vec)
+  {
+    const int my_nc = lat->get_nc();
+    if (my_nc % 2) { return ; }
+    double scale[my_nc];
+    int shuffle[my_nc];
+    for (int i = 0; i < my_nc/2; i++)
+    {
+      scale[i] = 1.0;
+      scale[i+my_nc/2] = 1.0;
+      shuffle[i] = i+my_nc/2;
+      shuffle[i+my_nc/2] = i;
+    }
+    caxy_shuffle_pattern(scale, shuffle, my_nc, vec, s1_vec, lat->get_volume());
+  }
+
 };
 
 #endif

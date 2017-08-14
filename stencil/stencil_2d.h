@@ -922,6 +922,17 @@ public:
   // Copy the down projection into a new vector, perform the up in place.
   virtual void chiral_projection_both(complex<double>* orig_to_up, complex<double>* down) = 0;
 
+  // Apply sigma1 in place. Default does nothing.
+  virtual void sigma1(complex<double>* vec)
+  {
+    return;
+  }
+
+  // Apply sigma1 saved in a vector
+  virtual void sigma1(complex<double>* s1_vec, complex<double>* vec)
+  {
+    copy_vector(s1_vec, vec, lat->get_size_cv());
+  }
 
 public:
   //////////////////////////////
@@ -2385,6 +2396,22 @@ void apply_stencil_2D_M(complex<double>* lhs, complex<double>* rhs, void* extra_
   Stencil2D* stenc = (Stencil2D*)extra_data;
   zero_vector(lhs, stenc->lat->get_size_cv());
   stenc->apply_M(lhs, rhs); // lhs = M rhs
+}
+
+// Apply clover only.
+void apply_stencil_2D_M_piece_clover(complex<double>* lhs, complex<double>* rhs, void* extra_data)
+{
+  Stencil2D* stenc = (Stencil2D*)extra_data;
+  zero_vector(lhs, stenc->lat->get_size_cv());
+  stenc->apply_M_clover(lhs, rhs); // lhs = M rhs
+}
+
+// Apply hopping only.
+void apply_stencil_2D_M_piece_hopping(complex<double>* lhs, complex<double>* rhs, void* extra_data)
+{
+  Stencil2D* stenc = (Stencil2D*)extra_data;
+  zero_vector(lhs, stenc->lat->get_size_cv());
+  stenc->apply_M_hopping(lhs, rhs); // lhs = M rhs
 }
 
 void apply_stencil_2D_M_dagger(complex<double>* lhs, complex<double>* rhs, void* extra_data)

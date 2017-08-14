@@ -1,8 +1,6 @@
 // Copyright (c) 2017 Evan S Weinberg
 // Header file for a transfer object, which contains everything (?)
 // needed for MG prolong/restrict assuming regular, non-overlapping blocks.
-// It also assumes Galerkin projections, i.e., R = P^\dagger.
-// It wouldn't be hard to relax this assumption. 
 // This file needs OpenMP/ACC pragmas to get thread-level optimization.
 
 // MG prolong/restrict requires:
@@ -42,11 +40,15 @@ private:
 
   // Lattices for fine and coarse lattice.
   Lattice2D* fine_lat;
+// Hack!
+public:
   Lattice2D* coarse_lat; 
 
   // For safety during deconstructor, make sure we know the 
   // number of coarse dof ( = number of null vectors)
-  const int const_num_null_vec;
+public:
+  int const_num_null_vec;
+private:
   // and coarse volume.
   const int const_coarse_volume;
 
@@ -63,14 +65,24 @@ private:
   // Number of fine sites+dof per coarse site.
   int fine_sites_per_coarse; 
 
+  // Hacky hack hack.
+public:
   // Local copies of null vectors. Block orthonormalization
   // modifies the null vectors, and we don't want to assume
   // we can perturb the original copies of the null vectors.
   complex<double>** null_vectors; 
 
+  // We do support separate left and right null vectors.
+  complex<double>** restrict_null_vectors;
+
+private:
   // Declaration of internal function to perform block orthonormalization.
   // We define it below.
   void block_orthonormalize();
+
+  // Declaration of internal function to perform block bi-orthonormalization.
+  // We define it below.
+  void block_bi_orthonormalize();
 
   // Declarations of more generic prolong/restrict functions.
   // Supports an abuse of prolong/restrict to block-orthonormalize.
@@ -89,10 +101,9 @@ public:
   // to not waste time re-orthonormalizing them. 
   TransferMG(Lattice2D* in_fine_lat, Lattice2D* in_coarse_lat, complex<double>** in_null_vectors, bool do_block_ortho = true)
     : fine_lat(in_fine_lat), coarse_lat(in_coarse_lat), const_num_null_vec(coarse_lat->get_nc()),
-      const_coarse_volume(coarse_lat->get_volume()), blocksizes(0), coarse_map(0), null_vectors(0)
+      const_coarse_volume(coarse_lat->get_volume()), blocksizes(0), coarse_map(0),
+      null_vectors(0), restrict_null_vectors(0), is_init(false)
   {
-    // Assume the vector construction failed until we know it hasn't.
-    is_init = false;
 
     // Learn the blocksizes. 
     blocksizes = new int[fine_lat->get_nd()];
@@ -122,7 +133,40 @@ public:
 
     // Block orthonormalize, if requested.
     if (do_block_ortho)
+    {
       block_orthonormalize();
+      block_orthonormalize();
+    }
+
+    // We're good!
+    is_init = true;
+
+  }
+
+  // Constructor for separate prolongator, restrictor. Takes in fine and
+  // coarse lattice, input prolong and restrict vectors, and a flag about
+  // performing block orthonormalization. Takes advantage of constructor
+  // above.
+  TransferMG(Lattice2D* in_fine_lat, Lattice2D* in_coarse_lat,
+      complex<double>** in_prolong_null_vectors, complex<double>** in_restrict_null_vectors,
+      bool do_block_bi_ortho = true)
+    : TransferMG(in_fine_lat, in_coarse_lat, in_prolong_null_vectors, false)
+  {
+
+    // Copy in restrict vectors. 
+    restrict_null_vectors = new complex<double>*[coarse_lat->get_nc()];
+    for (int i = 0; i < coarse_lat->get_nc(); i++)
+    {
+      restrict_null_vectors[i] = allocate_vector<complex<double>>(fine_lat->get_size_cv());
+      copy_vector(restrict_null_vectors[i], in_restrict_null_vectors[i], fine_lat->get_size_cv());
+    }
+
+    // Block bi-orthonormalize, if requested.
+    if (do_block_bi_ortho)
+    {
+      block_bi_orthonormalize();
+      block_bi_orthonormalize();
+    }
 
     // We're good!
     is_init = true;
@@ -140,6 +184,14 @@ public:
         if (null_vectors[i] != 0) { deallocate_vector(&null_vectors[i]); }
       }
       delete[] null_vectors;
+    }
+    if (restrict_null_vectors != 0)
+    {
+      for (int i = 0; i < const_num_null_vec; i++)
+      {
+        if (restrict_null_vectors[i] != 0) { deallocate_vector(&restrict_null_vectors[i]); }
+      }
+      delete[] restrict_null_vectors;
     }
     if (coarse_map != 0)
     {
@@ -170,7 +222,13 @@ public:
   // Arg 2: coarse vector.
   void restrict_f2c(complex<double>* fine_cv, complex<double>* coarse_cv)
   {
-    restrict_f2c(fine_cv, coarse_cv, null_vectors, coarse_lat->get_nc());
+    restrict_f2c(fine_cv, coarse_cv, (restrict_null_vectors == 0) ? null_vectors : restrict_null_vectors, coarse_lat->get_nc());
+  }
+
+  // Query if the restrictor equals P^\dagger.
+  bool is_symmetric()
+  {
+    return (restrict_null_vectors == 0);
   }
 
 
@@ -190,6 +248,22 @@ private:
   {
     double tmp = 1.0/sqrt(real(elem));
     elem = complex<double>(tmp, 0.0);
+  }
+
+  // Special C function to take the inverse magnitude square root
+  // of a site. Needed for block bi-orthonormalize.
+  static inline void inv_abs_sqrt(int i, complex<double>& elem, void* extra_data)
+  {
+    double tmp = 1.0/abs(elem);
+    elem = complex<double>(tmp, 0.0);
+  }
+
+  // Special C function to take the inverse magnitude square root,
+  // preserving the phase, of a site. Needed for block bi-orthonormalize.
+  static inline void inv_phase_abs_sqrt(int i, complex<double>& elem, void* extra_data)
+  {
+    double tmp = 1.0/sqrt(abs(elem));
+    elem = polar(tmp, arg(elem));
   }
   
 };
@@ -391,6 +465,112 @@ void TransferMG::block_orthonormalize()
 
     // Set this back to null_vectors[i].
     copy_vector(null_vectors[i], fine_cv_1, fine_size_cv);
+  }
+
+  // Clean up.
+  deallocate_vector(&coarse_cv_2);
+  deallocate_vector(&fine_cv_1);
+}
+
+// Perform the block bi-orthonormalization.
+void TransferMG::block_bi_orthonormalize()
+{
+  // Based on the smart block_orthonormalize.
+
+  // Iterators.
+  int i,j;
+
+  // Values.
+  const int fine_size_cv = fine_lat->get_size_cv();
+  const int coarse_size_cv = coarse_lat->get_size_cv();
+  const int coarse_dof = coarse_lat->get_nc();
+
+  // Temporary vectors. 
+
+  // Fine...
+  complex<double>* fine_cv_1 = allocate_vector<complex<double>>(fine_size_cv);
+  zero_vector(fine_cv_1, fine_size_cv);
+
+  // ...and coarse.
+  complex<double>* coarse_cv_2 = allocate_vector<complex<double>>(coarse_size_cv);
+  zero_vector(coarse_cv_2, coarse_size_cv);
+
+  // Loop over all null vectors.
+  for (i = 0; i < coarse_dof; i++)
+  {
+    // Block Orthogonalize null vector i against previous null vectors.
+    for (j = 0; j < i; j++)
+    {
+      // Zero out vectors.
+      zero_vector(fine_cv_1, fine_size_cv);
+      zero_vector(coarse_cv_2, coarse_size_cv);
+
+      // Take care of the prolong.
+
+      // Restrict null vector i with (already ortho'd null vector) j.
+      // This is the <\restrict{i},\prolong{j}> dot product.
+      restrict_f2c(null_vectors[i], coarse_cv_2, &restrict_null_vectors[j], 1);
+
+      // Prolong again with null vector i.
+      // This forms <\restrict{i},\prolong{j}> \prolong{j}.
+      prolong_c2f(coarse_cv_2, fine_cv_1, &null_vectors[j], 1);
+
+      // Subtract off.
+      // This forms \prolong{i} -= <\restrict{i},\prolong{j}> \prolong{j}.
+      caxpy(-1.0, fine_cv_1, null_vectors[i], fine_size_cv);
+
+      // Take care of the restrict.
+      zero_vector(fine_cv_1, fine_size_cv);
+      zero_vector(coarse_cv_2, coarse_size_cv);
+
+      // Restrict restricting null vector i with (already ortho'd null vector) j.
+      // This is the <\prolong{i},\restrict{j}> dot product.
+      restrict_f2c(restrict_null_vectors[i], coarse_cv_2, &null_vectors[j], 1);
+
+      // Prolong again with null vector i.
+      // This forms <\prolong{i},\restrict{j}> \restrict{j}.
+      prolong_c2f(coarse_cv_2, fine_cv_1, &restrict_null_vectors[j], 1);
+
+      // Subtract off.
+      // This forms \restrict{i} -= <\prolong{i},\restrict{j}> \restrict{j}
+      caxpy(-1.0, fine_cv_1, restrict_null_vectors[i], fine_size_cv);
+    }
+
+    // Normalize restrict. Preserve phase.
+
+    // Block normalize null vector i.
+    // zero out vectors again.
+    zero_vector(fine_cv_1, fine_size_cv);
+    zero_vector(coarse_cv_2, coarse_size_cv);
+
+    // Restrict prolongator i with restrictor i.
+    // This is a block <\restrict{i}, \prolng{i}>.
+    restrict_f2c(null_vectors[i], coarse_cv_2, &restrict_null_vectors[i], 1);
+
+    // Prepare to normalize. This requires taking the inverse abs sqrt of
+    // <\restrict{i}, \prolong{i}>. The '0' is because it doesn't need any info passed in.
+    arb_local_function_vector(coarse_cv_2, inv_phase_abs_sqrt, 0, coarse_size_cv);
+
+    // Prolong the inverse norm with null vector i. 
+    // This is block phases \restrict{i}/(~sqrt(<\restrict{i}, \prolong{i}>)).
+    prolong_c2f(coarse_cv_2, fine_cv_1, &restrict_null_vectors[i], 1);
+
+    // Set this back to null_vectors[i].
+    copy_vector(restrict_null_vectors[i], fine_cv_1, fine_size_cv);
+
+    // Normalize prolong. Only requires abs-ing the norm.
+    zero_vector(fine_cv_1, fine_size_cv);
+
+    abs_vector(coarse_cv_2, coarse_size_cv);
+
+    // Prolong the inverse norm with prolong null vector i. 
+    // This is block \prolong{i}/sqrt(abs(<\restrict{i}, \prolong{i}>)).
+    prolong_c2f(coarse_cv_2, fine_cv_1, &null_vectors[i], 1);
+
+    // Set this back to null_vectors[i].
+    copy_vector(null_vectors[i], fine_cv_1, fine_size_cv);
+
+    
   }
 
   // Clean up.

@@ -210,11 +210,14 @@ public:
     // Restart frequency. -1 means don't restart.
     int coarsest_restart_freq;
 
+    // Deflate coarsest. Ignored if we aren't doing CGNE/CGNR
+    bool deflate;
+
     // By default, there's "no" stopping condition.
     CoarsestSolveMG()
       : coarsest_stencil_app(QMG_MATVEC_ORIGINAL),
         coarsest_tol(1e-20), coarsest_iters(100000000),
-        coarsest_restart_freq(32)
+        coarsest_restart_freq(32), deflate(true)
     { ; }
   };
 
@@ -230,11 +233,17 @@ protected:
   // Information on the coarsest level solve.
   CoarsestSolveMG* coarsest_solve; 
 
+  // Storage for eigenvalues, vectors on coarsest level.
+  int coarsest_deflated;
+  complex<double>* coarsest_evals;
+  complex<double>** coarsest_evecs;
+
 public:
 
   // Simple constructor.
   StatefulMultigridMG(Lattice2D* in_lat, Stencil2D* in_stencil, CoarsestSolveMG* in_coarsest_solve)
-    : MultigridMG(in_lat, in_stencil), coarsest_solve(in_coarsest_solve)
+    : MultigridMG(in_lat, in_stencil), coarsest_solve(in_coarsest_solve),
+      coarsest_deflated(0), coarsest_evals(0), coarsest_evecs(0)
   {
     // Set the current level to zero.
     current_level = 0;
@@ -249,6 +258,21 @@ public:
     {
       delete dslash_tracker_list[i];
       dslash_tracker_list[i] = 0;
+    }
+
+    // Clean up eigenvectors as appropriate.
+    if (coarsest_evals != 0)
+    {
+      delete[] coarsest_evals;
+    }
+    if (coarsest_evecs != 0)
+    {
+      for (int i = 0; i < coarsest_deflated; i++)
+      {
+        if (coarsest_evecs[i] != 0)
+          deallocate_vector(&coarsest_evecs[i]);
+      }
+      delete[] coarsest_evecs;
     }
   }
 
@@ -560,6 +584,101 @@ public:
     }
   }
 
+  // Routine to deflate coarsest level.
+  void deflate_coarsest(int num_low, int num_high, bool print_evals = false)
+  {
+#ifndef QLINALG_INTERFACE_ARPACK
+    std::cout << "[QMG-ERROR]: Cannot deflate coarest operator without ARPACK support.\n";
+    return;
+#else
+
+    if (!coarsest_solve->deflate)
+    {
+      std::cout << "[QMG-WARNING]: Coarsest level is not set to deflate. Skipping computing eigenvectors.\n";
+    }
+
+    if (coarsest_solve->coarsest_stencil_app != QMG_MATVEC_M_MDAGGER &&
+          coarsest_solve->coarsest_stencil_app != QMG_MATVEC_MDAGGER_M &&
+          coarsest_solve->coarsest_stencil_app != QMG_MATVEC_RBJ_M_MDAGGER &&
+          coarsest_solve->coarsest_stencil_app != QMG_MATVEC_RBJ_MDAGGER_M)
+    {
+      std::cout << "[QMG-ERROR]: Cannot deflate coarsest operator unless it's a normal op solve.\n";
+      return;
+    }
+
+    if (coarsest_deflated != 0 || coarsest_evals != 0 || coarsest_evecs != 0)
+    {
+      std::cout << "[QMG-WARNING]: Coarsest operator space already deflated.\n";
+      return;
+    }
+
+    if (num_low + num_high == 0)
+    {
+      return;
+    }
+    
+    coarsest_deflated = num_low + num_high;
+    coarsest_evals = new complex<double>[coarsest_deflated];
+    coarsest_evecs = new complex<double>*[coarsest_deflated];
+    for (int i = 0; i < coarsest_deflated; i++)
+    {
+      coarsest_evecs[i] = allocate_vector<complex<double>>(get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv());
+    }
+
+    // Declare an arpack object.
+    arpack_dcn* arpack;
+
+    // Grab bottom of spectrum.
+    arpack = new arpack_dcn(get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv(), 4000, 1e-7,
+                  get_stencil(get_num_levels()-1)->get_apply_function(coarsest_solve->coarsest_stencil_app),
+                  get_stencil(get_num_levels()-1),
+                  num_low, 5*num_low);
+
+    arpack->prepare_eigensystem(arpack_dcn::ARPACK_SMALLEST_REAL, num_low, 5*num_low);
+    arpack->get_eigensystem(coarsest_evals, coarsest_evecs, arpack_dcn::ARPACK_SMALLEST_REAL);
+    delete arpack;
+
+    // Get top of spectrum.
+    arpack = new arpack_dcn(get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv(), 4000, 1e-7,
+                  get_stencil(get_num_levels()-1)->get_apply_function(coarsest_solve->coarsest_stencil_app),
+                  get_stencil(get_num_levels()-1),
+                  num_high, 5*num_high);
+
+    arpack->prepare_eigensystem(arpack_dcn::ARPACK_LARGEST_REAL, num_high, 5*num_high);
+    arpack->get_eigensystem(coarsest_evals + num_low, coarsest_evecs + num_low, arpack_dcn::ARPACK_SMALLEST_REAL);
+    delete arpack;
+
+    for (int i = 0; i < coarsest_deflated; i++)
+    {
+      normalize(coarsest_evecs[i], get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv());
+    }
+
+    if (print_evals)
+    {
+      for (int i = 0; i < coarsest_deflated; i++)
+      {
+        std::cout << "[QMG-COARSEST-EVALS]: " << i << " " << real(coarsest_evals[i]) << "\n";
+      }
+    }
+
+#endif
+  }
+
+  unsigned int get_coarsest_deflated()
+  {
+    return coarsest_deflated;
+  }
+
+  complex<double>* get_coarsest_evals()
+  {
+    return coarsest_evals;
+  }
+
+  complex<double>** get_coarsest_evecs()
+  {
+    return coarsest_evecs;
+  }
+
   // Need to add counters for prepare/reconstruct. 
   static void mg_preconditioner(complex<double>* lhs, complex<double>* rhs, int size, void* extra_data, inversion_verbose_struct* verb)
   {
@@ -703,6 +822,21 @@ public:
                               coarse_stencil_type == QMG_MATVEC_MDAGGER_M ||
                               coarse_stencil_type == QMG_MATVEC_RBJ_M_MDAGGER ||
                               coarse_stencil_type == QMG_MATVEC_RBJ_MDAGGER_M);
+      // Deflate if we're set to.
+      if (coarsest_normal && mg_object->get_coarsest_solve()->deflate && mg_object->get_coarsest_deflated() > 0)
+      {
+        int num_evecs = mg_object->get_coarsest_deflated();
+        complex<double>* evals = mg_object->get_coarsest_evals();
+        complex<double>** evecs = mg_object->get_coarsest_evecs();
+
+        // Deflate it upppppp.
+        for (int i = 0; i < num_evecs; i++)
+        {
+          complex<double> bra_n_ket_b = dot(evecs[i], r_coarse_prep, coarse_size_solve);
+          caxpy(bra_n_ket_b/evals[i], evecs[i], e_coarse, coarse_size_solve);
+        }
+      }
+
       if (coarse_restart == -1)
       {
         // Need to add norm factor to get proper un-preperared norm.
