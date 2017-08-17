@@ -628,25 +628,31 @@ public:
     // Declare an arpack object.
     arpack_dcn* arpack;
 
-    // Grab bottom of spectrum.
-    arpack = new arpack_dcn(get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv(), 4000, 1e-7,
-                  get_stencil(get_num_levels()-1)->get_apply_function(coarsest_solve->coarsest_stencil_app),
-                  get_stencil(get_num_levels()-1),
-                  num_low, 5*num_low);
+    if (num_low > 0)
+    {
+      // Grab bottom of spectrum.
+      arpack = new arpack_dcn(get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv(), 10000, 1e-5,
+                    get_stencil(get_num_levels()-1)->get_apply_function(coarsest_solve->coarsest_stencil_app),
+                    get_stencil(get_num_levels()-1),
+                    num_low, 3*num_low);
 
-    arpack->prepare_eigensystem(arpack_dcn::ARPACK_SMALLEST_REAL, num_low, 5*num_low);
-    arpack->get_eigensystem(coarsest_evals, coarsest_evecs, arpack_dcn::ARPACK_SMALLEST_REAL);
-    delete arpack;
+      arpack->prepare_eigensystem(arpack_dcn::ARPACK_SMALLEST_REAL, num_low, 3*num_low);
+      arpack->get_eigensystem(coarsest_evals, coarsest_evecs, arpack_dcn::ARPACK_SMALLEST_REAL);
+      delete arpack;
+    }
 
-    // Get top of spectrum.
-    arpack = new arpack_dcn(get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv(), 4000, 1e-7,
-                  get_stencil(get_num_levels()-1)->get_apply_function(coarsest_solve->coarsest_stencil_app),
-                  get_stencil(get_num_levels()-1),
-                  num_high, 5*num_high);
+    if (num_high > 0)
+    {
+      // Get top of spectrum.
+      arpack = new arpack_dcn(get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv(), 10000, 1e-5,
+                    get_stencil(get_num_levels()-1)->get_apply_function(coarsest_solve->coarsest_stencil_app),
+                    get_stencil(get_num_levels()-1),
+                    num_high, 3*num_high);
 
-    arpack->prepare_eigensystem(arpack_dcn::ARPACK_LARGEST_REAL, num_high, 5*num_high);
-    arpack->get_eigensystem(coarsest_evals + num_low, coarsest_evecs + num_low, arpack_dcn::ARPACK_SMALLEST_REAL);
-    delete arpack;
+      arpack->prepare_eigensystem(arpack_dcn::ARPACK_LARGEST_REAL, num_high, 3*num_high);
+      arpack->get_eigensystem(coarsest_evals + num_low, coarsest_evecs + num_low, arpack_dcn::ARPACK_SMALLEST_REAL);
+      delete arpack;
+    }
 
     for (int i = 0; i < coarsest_deflated; i++)
     {
