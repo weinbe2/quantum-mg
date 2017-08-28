@@ -40,15 +40,13 @@ private:
 
   // Lattices for fine and coarse lattice.
   Lattice2D* fine_lat;
-// Hack!
-public:
+
   Lattice2D* coarse_lat; 
 
   // For safety during deconstructor, make sure we know the 
   // number of coarse dof ( = number of null vectors)
-public:
   int const_num_null_vec;
-private:
+
   // and coarse volume.
   const int const_coarse_volume;
 

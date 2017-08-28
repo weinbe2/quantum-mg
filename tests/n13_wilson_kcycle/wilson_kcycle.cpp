@@ -48,6 +48,15 @@ int main(int argc, char** argv)
   // Check the spectrum?
   const bool do_spectrum = false;
 
+  // Are we performing various colinearity checks?
+  bool do_colinear = true;
+
+  // Do we use eigenvectors as null vectors?
+  bool nulls_are_eigenvectors = true;
+
+  // Do we grab just positive eigenvectors for null vectors, or all?
+  bool nulls_positive_evec_only = true;
+
   // Set output precision to be long.
   cout << setprecision(20);
 
@@ -240,6 +249,8 @@ int main(int argc, char** argv)
   TransferMG** transfer_objs = new TransferMG*[n_refine];
   for (i = 1; i <= n_refine; i++)
   {
+    const int fine_idx = i-1;
+
     // Update to the new lattice size.
     curr_x_len /= x_block;
     curr_y_len /= y_block;
@@ -266,52 +277,103 @@ int main(int argc, char** argv)
     }
     else
     {
-      // Create coarse_dof null vectors.
-      for (j = 0; j < coarse_dof/2; j++)
+      for (j = 0; j < coarse_dof; j++)
       {
-        // Will become up chiral projection
         null_vectors[j] = allocate_vector<complex<double> >(lats[i-1]->get_size_cv());
         zero_vector(null_vectors[j], lats[i-1]->get_size_cv());
+      }
 
-        // Check out vector.
-        complex<double>* rand_guess = mg_object->get_storage(i-1)->check_out();
+      if (nulls_are_eigenvectors)
+      {
 
-        // Fill with random numbers.
-        gaussian(rand_guess, lats[i-1]->get_size_cv(), generator);
+        arpack_dcn* arpack;
+        complex<double>* coarsest_evals_right = new complex<double>[coarse_dof];
+        complex<double>** coarsest_evecs_right = new complex<double>*[coarse_dof];
+        for (j = 0; j < coarse_dof; j++)
+        {
+          coarsest_evecs_right[j] = allocate_vector<complex<double>>(lats[fine_idx]->get_size_cv());
+        }
+        
+        // Grab lowest coarse_dof eigenvectors of D.
+        arpack = new arpack_dcn(lats[fine_idx]->get_size_cv(), 4000, 1e-7,
+                      apply_stencil_2D_M, mg_object->get_stencil(fine_idx),
+                      coarse_dof, 3*coarse_dof);
 
-        // Make orthogonal to previous vectors.
-        for (k = 0; k < j; k++)
-          orthogonal(rand_guess, null_vectors[k], lats[i-1]->get_size_cv());
+        arpack->prepare_eigensystem(arpack_dcn::ARPACK_SMALLEST_MAGNITUDE, coarse_dof, 3*coarse_dof);
+        arpack->get_eigensystem(coarsest_evals_right, coarsest_evecs_right, arpack_dcn::ARPACK_SMALLEST_MAGNITUDE);
+        delete arpack;
+        for (j = 0; j < coarse_dof; j++)
+        {
+          std::cout << "Right eval " << j << " " << coarsest_evals_right[j] << "\n";
+          normalize(coarsest_evecs_right[j], lats[fine_idx]->get_size_cv());
+        }
+        for (j = 0; j < coarse_dof/2; j++)
+        {
+          if (nulls_positive_evec_only) // grab only positive imag
+          {
+            if (coarsest_evals_right[2*j].imag() > coarsest_evals_right[2*j+1].imag())
+            {
+              copy_vector(null_vectors[j], coarsest_evecs_right[2*j], lats[fine_idx]->get_size_cv());
+            }
+            else
+            {
+              copy_vector(null_vectors[j], coarsest_evecs_right[2*j+1], lats[fine_idx]->get_size_cv());
+            }
+          }
+          else
+          {
+            copy_vector(null_vectors[j], coarsest_evecs_right[j], lats[fine_idx]->get_size_cv());
+          }
+        }
+        for (j = 0; j < coarse_dof; j++)
+        {
+          deallocate_vector(&coarsest_evecs_right[j]);
+        }
+        delete[] coarsest_evecs_right;
+        delete[] coarsest_evals_right;
+      }
+      else
+      {
+        // Create coarse_dof null vectors.
+        for (j = 0; j < coarse_dof/2; j++)
+        {
+          // Check out vector.
+          complex<double>* rand_guess = mg_object->get_storage(i-1)->check_out();
 
-        // Check out vector for residual equation.
-        complex<double>* Arand_guess = mg_object->get_storage(i-1)->check_out();
+          // Fill with random numbers.
+          gaussian(rand_guess, lats[i-1]->get_size_cv(), generator);
 
-        // Zero, form residual.
-        zero_vector(Arand_guess, lats[i-1]->get_size_cv());
-        mg_object->get_stencil(i-1)->apply_M(Arand_guess, rand_guess);
-        cax(-1.0, Arand_guess, lats[i-1]->get_size_cv());
+          // Make orthogonal to previous vectors.
+          for (k = 0; k < j; k++)
+            orthogonal(rand_guess, null_vectors[k], lats[i-1]->get_size_cv());
 
-        // Solve residual equation.
-        minv_vector_bicgstab_l(null_vectors[j], Arand_guess, lats[i-1]->get_size_cv(), 500, 5e-5, 6, apply_stencil_2D_M, (void*)mg_object->get_stencil(i-1), &verb);
+          // Check out vector for residual equation.
+          complex<double>* Arand_guess = mg_object->get_storage(i-1)->check_out();
 
-        // Undo residual equation.
-        cxpy(rand_guess, null_vectors[j], lats[i-1]->get_size_cv());
+          // Zero, form residual.
+          zero_vector(Arand_guess, lats[i-1]->get_size_cv());
+          mg_object->get_stencil(i-1)->apply_M(Arand_guess, rand_guess);
+          cax(-1.0, Arand_guess, lats[i-1]->get_size_cv());
 
-        // Check in.
-        mg_object->get_storage(i-1)->check_in(rand_guess);
-        mg_object->get_storage(i-1)->check_in(Arand_guess);
+          // Solve residual equation.
+          minv_vector_bicgstab_l(null_vectors[j], Arand_guess, lats[i-1]->get_size_cv(), 500, 5e-5, 6, apply_stencil_2D_M, (void*)mg_object->get_stencil(i-1), &verb);
 
-        // Orthogonalize against previous vectors.
-        for (k = 0; k < j; k++)
-          orthogonal(null_vectors[j], null_vectors[k], lats[i-1]->get_size_cv());
+          // Undo residual equation.
+          cxpy(rand_guess, null_vectors[j], lats[i-1]->get_size_cv());
+
+          // Check in.
+          mg_object->get_storage(i-1)->check_in(rand_guess);
+          mg_object->get_storage(i-1)->check_in(Arand_guess);
+
+          // Orthogonalize against previous vectors.
+          for (k = 0; k < j; k++)
+            orthogonal(null_vectors[j], null_vectors[k], lats[i-1]->get_size_cv());
+        }
       }
 
       // Perform chiral projection.
       for (j = 0; j < coarse_dof/2; j++)
       {
-        // Get new vector.
-        null_vectors[j+lats[i]->get_nc()/2] = allocate_vector<complex<double> >(lats[i-1]->get_size_cv());
-
         // Perform chiral projection, putting the "down" projection into the second
         // vector and keeping the "up" projection in the first vector.
         mg_object->get_stencil(i-1)->chiral_projection_both(null_vectors[j], null_vectors[j+lats[i]->get_nc()/2]);
@@ -456,6 +518,100 @@ int main(int argc, char** argv)
 
     delete[] eigs;
     delete arpack;
+  }
+
+  //////////////////////////////////////////
+  // Do various local co-linearity checks //
+  //////////////////////////////////////////
+
+  if (do_colinear)
+  {
+    // Get eigenvalues and eigenvectors of fine op.
+
+    // Declare an arpack object and some storage.
+    arpack_dcn* arpack;
+    complex<double>* eigs;
+    complex<double>** evecs;
+
+    arpack = new arpack_dcn(lats[0]->get_size_cv(), 4000, 1e-7, apply_stencil_2D_M, (void*)mg_object->get_stencil(0));
+    eigs = new complex<double>[lats[0]->get_size_cv()];
+    evecs = new complex<double>*[lats[0]->get_size_cv()];
+    for (i = 0; i < lats[0]->get_size_cv(); i++)
+    {
+      evecs[i] = allocate_vector<complex<double> >(lats[0]->get_size_cv());
+    }
+
+    arpack->get_entire_eigensystem(eigs, evecs, arpack_dcn::ARPACK_SMALLEST_MAGNITUDE);
+    delete arpack;
+
+    //for (i = 0; i < lats[0]->get_size_cv(); i++)
+    //  std::cout << "[CIRCLE-SPECTRUM]: " << i << " " << real(eigs[i]) << " + I " << imag(eigs[i]) << "\n";
+
+    // Build some lists.
+    std::vector<double> onePP;//(lats[0]->get_size_cv());
+    std::vector<double> onePAPA;//(lats[0]->get_size_cv());
+
+    // Check ||(1 - P P^\dagger) v||
+    complex<double>* PdagV = mg_object->get_storage(1)->check_out();
+    complex<double>* PPdagV = mg_object->get_storage(0)->check_out();
+    for (i = 0; i < lats[0]->get_size_cv(); i++)
+    {
+      zero_vector(PdagV, lats[1]->get_size_cv());
+      zero_vector(PPdagV, lats[0]->get_size_cv());
+
+      mg_object->get_transfer(0)->restrict_f2c(evecs[i], PdagV);
+      mg_object->get_transfer(0)->prolong_c2f(PdagV, PPdagV);
+
+      onePP.push_back(sqrt(diffnorm2sq(evecs[i], PPdagV, lats[0]->get_size_cv())/norm2sq(evecs[i], lats[0]->get_size_cv())));
+    }
+
+    mg_object->get_storage(1)->check_in(PdagV);
+    mg_object->get_storage(0)->check_in(PPdagV);
+
+
+    // Check ||(1-P(P^\dagger A P)^{-1}P^\dagger A)v||
+    complex<double>* AV = mg_object->get_storage(0)->check_out();
+    complex<double>* PdagAV = mg_object->get_storage(1)->check_out();
+    complex<double>* AcInvPdagAV = mg_object->get_storage(1)->check_out();
+    complex<double>* PAcInvPdagAV = mg_object->get_storage(0)->check_out();
+    for (i = 0; i < lats[0]->get_size_cv(); i++)
+    {
+      zero_vector(AV, lats[0]->get_size_cv());
+      zero_vector(PdagAV, lats[1]->get_size_cv());
+      zero_vector(AcInvPdagAV, lats[1]->get_size_cv());
+      zero_vector(PAcInvPdagAV, lats[0]->get_size_cv());
+
+      mg_object->get_stencil(0)->apply_M(AV, evecs[i]);
+      mg_object->get_transfer(0)->restrict_f2c(AV, PdagAV);
+      minv_vector_bicgstab_l(AcInvPdagAV, PdagAV, lats[1]->get_size_cv(), 1000, 1e-10, 6, apply_stencil_2D_M, (void*)mg_object->get_stencil(1));
+      mg_object->get_transfer(0)->prolong_c2f(AcInvPdagAV, PAcInvPdagAV);
+
+      onePAPA.push_back(sqrt(diffnorm2sq(evecs[i], PAcInvPdagAV, lats[0]->get_size_cv())/norm2sq(evecs[i], lats[0]->get_size_cv())));
+    }
+
+    mg_object->get_storage(0)->check_in(AV);
+    mg_object->get_storage(1)->check_in(PdagAV);
+    mg_object->get_storage(1)->check_in(AcInvPdagAV);
+    mg_object->get_storage(0)->check_in(PAcInvPdagAV);
+
+    for (i = 0; i < lats[0]->get_size_cv(); i++)
+    {
+      std::cout << "[QMG-OVERLAP]: " << i <<
+                " " << real(eigs[i]) <<
+                " + I " << imag(eigs[i]) <<
+                " " << abs(eigs[i]) << 
+                " | " << onePP[i] <<
+                " | " << onePAPA[i] << "\n";
+    }
+
+
+    delete[] eigs;
+    for (i = 0; i < lats[0]->get_size_cv(); i++)
+    {
+      deallocate_vector(&evecs[i]);
+    }
+    delete[] evecs;
+
   }
 
   ///////////////

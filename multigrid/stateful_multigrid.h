@@ -13,6 +13,7 @@
 // QLINALG
 #include "blas/generic_vector.h"
 #include "inverters/generic_gcr.h"
+#include "inverters/generic_cg.h"
 #include "inverters/generic_bicgstab_l.h"
 #include "inverters/generic_minres.h"
 #include "inverters/generic_richardson.h"
