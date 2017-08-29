@@ -264,8 +264,8 @@ int main(int argc, char** argv)
     }
 
     // Create and populate a transfer object.
-    // Fine lattice, coarse lattice, null vector(s), perform the block ortho.
-    transfer_objs[i-1] = new TransferMG(lats[i-1], lats[i], null_vectors, true);
+    // Fine lattice, coarse lattice, null vector(s), perform the block ortho, preserve cholesky, how did we double
+    transfer_objs[i-1] = new TransferMG(lats[i-1], lats[i], null_vectors, true, false, QMG_DOUBLE_PROJECTION);
 
     // Prepare a new LevelSolveMG object for the new level.
     level_solve_objs[i-1] = new StatefulMultigridMG::LevelSolveMG;

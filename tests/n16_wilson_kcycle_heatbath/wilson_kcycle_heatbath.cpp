@@ -403,8 +403,10 @@ int main(int argc, char** argv)
         //        At some point, we'll support loading/saving null
         //        vectors, so there could be a reason why the vectors
         //        are already block orthonormalized.
+        // Arg 5: Ignore (specifies if we should save Cholesky decomp of block ortho)
+        // Arg 6: How we doubled the number of null vectors.
         transfer_objs[fine_idx] = new TransferMG(lats[fine_idx], lats[coarse_idx],
-                                    null_vectors, true);
+                                    null_vectors, true, false, QMG_DOUBLE_PROJECTION);
 
         // Fill a new LevelSolveMG object for the new level.
         // This defines how an outer solve is done with level 'fine_idx',

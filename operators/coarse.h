@@ -38,6 +38,12 @@ protected:
   // Is this the coarse version of a right block jacobi stencil?
   bool use_rbjacobi;
 
+  // Save the transfer object, if it exists.
+  TransferMG* in_transfer;
+
+  // Save the default chirality.
+  QMGDefaultChirality default_chirality;
+
 public:
   // Enum for if we should build the dagger and/or rbjacobi stencil.
   enum QMGCoarseBuildStencil
@@ -53,8 +59,8 @@ public:
 public:
 
   // Base constructor to set up a bare stencil.
-  CoarseOperator2D(Lattice2D* in_lat, int pieces, bool is_chiral, complex<double> in_shift = 0.0, complex<double> in_eo_shift = 0.0, complex<double> in_dof_shift = 0.0)
-    : Stencil2D(in_lat, pieces, in_shift, in_eo_shift, in_dof_shift), is_chiral(is_chiral), use_rbjacobi(false)
+  CoarseOperator2D(Lattice2D* in_lat, int pieces, bool is_chiral, QMGDefaultChirality def_chiral = QMG_CHIRALITY_NONE, complex<double> in_shift = 0.0, complex<double> in_eo_shift = 0.0, complex<double> in_dof_shift = 0.0)
+    : Stencil2D(in_lat, pieces, in_shift, in_eo_shift, in_dof_shift), is_chiral(is_chiral), use_rbjacobi(false), in_transfer(0), default_chirality(def_chiral)
   { ; }
 
   // Base constructor to build a coarse stencil from a fine stencil.
@@ -65,7 +71,7 @@ public:
   // Also need some smart way to deal with the mass (for \gamma_5 ops)
   // Currently this function only transfers identity shifts.
   CoarseOperator2D(Lattice2D* in_lat, Stencil2D* fine_stencil, Lattice2D* fine_lattice, TransferMG* transfer, bool is_chiral = false, bool use_rbjacobi = false, QMGCoarseBuildStencil build_extra = QMG_COARSE_BUILD_ORIGINAL)
-    : Stencil2D(in_lat, QMG_PIECE_CLOVER_HOPPING, 0.0, 0.0, 0.0), fine_lat(fine_lattice), is_chiral(is_chiral), use_rbjacobi(use_rbjacobi)
+    : Stencil2D(in_lat, QMG_PIECE_CLOVER_HOPPING, 0.0, 0.0, 0.0), fine_lat(fine_lattice), is_chiral(is_chiral), use_rbjacobi(use_rbjacobi), in_transfer(transfer)
   {
     const int coarse_vol = lat->get_volume();
     const int coarse_size = lat->get_size_cv();
@@ -76,6 +82,22 @@ public:
     tmp_coarse = allocate_vector<complex<double>>(coarse_size);
     tmp_fine = allocate_vector<complex<double>>(fine_size);
     tmp_Afine = allocate_vector<complex<double>>(fine_size);
+
+    // Learn about chirality from transfer object.
+    QMGDoublingType doubling = in_transfer->get_doubling();
+
+    switch(doubling)
+    {
+      case QMG_DOUBLE_NONE:
+        default_chirality = QMG_CHIRALITY_NONE;
+        break;
+      case QMG_DOUBLE_PROJECTION:
+        default_chirality = QMG_CHIRALITY_GAMMA_5;
+        break;
+      case QMG_DOUBLE_OPERATOR:
+        default_chirality = QMG_CHIRALITY_SIGMA_1;
+        break;
+    }
 
     // Prepare for rbjacobi build. 
     if (use_rbjacobi)
@@ -569,6 +591,11 @@ public:
       shuffle[i+my_nc/2] = i;
     }
     caxy_shuffle_pattern(scale, shuffle, my_nc, vec, s1_vec, lat->get_volume());
+  }
+
+  virtual QMGDefaultChirality get_default_chirality()
+  {
+    return default_chirality;
   }
 
 };

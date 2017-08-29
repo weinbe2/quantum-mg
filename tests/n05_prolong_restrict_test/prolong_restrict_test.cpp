@@ -25,9 +25,7 @@ int main(int argc, char** argv)
   cout << setiosflags(ios::fixed) << setprecision(6);
 
   //Iterators and such.
-  int i,j;
-  int x_coarse,y_coarse,dof_coarse,x_fine,y_fine,dof_fine;
-  int count; 
+  int i;
 
   // Random number generator.
   std::mt19937 generator (1337u);

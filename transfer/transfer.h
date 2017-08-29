@@ -31,6 +31,14 @@ using std::conj;
 // QMG
 #include "lattice/lattice.h"
 
+// What type of doubling, if any?
+enum QMGDoublingType
+{
+  QMG_DOUBLE_NONE = 0,
+  QMG_DOUBLE_PROJECTION = 1, // apply with a projector.
+  QMG_DOUBLE_OPERATOR = 2, // apply by doubling with gamma_5^L/R.
+};
+
 class TransferMG
 {
 private:
@@ -80,6 +88,10 @@ public:
   complex<double>* block_U;
 
 private:
+
+  // How we double the space.
+  QMGDoublingType doubling;
+
   // Declaration of internal function to perform block orthonormalization.
   // We define it below.
   void block_orthonormalize();
@@ -103,12 +115,12 @@ public:
   // a flag about performing block orthonormalization (default true).
   // If the null vectors are pre-block orthonormalized, it might make sense
   // to not waste time re-orthonormalizing them. 
-  TransferMG(Lattice2D* in_fine_lat, Lattice2D* in_coarse_lat, complex<double>** in_null_vectors, bool do_block_ortho = true, bool save_decomp = false)
+  TransferMG(Lattice2D* in_fine_lat, Lattice2D* in_coarse_lat, complex<double>** in_null_vectors, bool do_block_ortho = true, bool save_decomp = false, QMGDoublingType in_doubling = QMG_DOUBLE_NONE)
     : fine_lat(in_fine_lat), coarse_lat(in_coarse_lat), const_num_null_vec(coarse_lat->get_nc()),
       const_coarse_volume(coarse_lat->get_volume()), blocksizes(0), coarse_map(0),
       null_vectors(0), restrict_null_vectors(0), 
       block_cholesky(0), block_L(0), block_U(0),
-      is_init(false)
+      doubling(in_doubling), is_init(false)
   {
 
     // Learn the blocksizes. 
@@ -173,8 +185,8 @@ public:
   // above.
   TransferMG(Lattice2D* in_fine_lat, Lattice2D* in_coarse_lat,
       complex<double>** in_prolong_null_vectors, complex<double>** in_restrict_null_vectors,
-      bool do_block_bi_ortho = true, bool save_decomp = false)
-    : TransferMG(in_fine_lat, in_coarse_lat, in_prolong_null_vectors, false, false)
+      bool do_block_bi_ortho = true, bool save_decomp = false, QMGDoublingType in_doubling = QMG_DOUBLE_NONE)
+    : TransferMG(in_fine_lat, in_coarse_lat, in_prolong_null_vectors, false, false, in_doubling)
   {
 
     // Copy in restrict vectors. 
@@ -314,6 +326,11 @@ public:
       copy_vector(save_L, block_L, coarse_lat->get_size_cm());
       copy_vector(save_U, block_U, coarse_lat->get_size_cm());
     }
+  }
+
+  QMGDoublingType get_doubling()
+  {
+    return doubling;
   }
 
 

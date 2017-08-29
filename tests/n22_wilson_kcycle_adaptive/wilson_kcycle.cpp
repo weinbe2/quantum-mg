@@ -304,8 +304,8 @@ int main(int argc, char** argv)
     // Create a first transfer object.
 
     // Create and populate a transfer object.
-    // Fine lattice, coarse lattice, null vector(s), perform the block ortho.
-    transfer_objs[fine_idx] = new TransferMG(lats[fine_idx], lats[coarse_idx], null_vectors, true);
+    // Fine lattice, coarse lattice, null vector(s), perform the block ortho, don't save Cholesky, doubled by projection
+    transfer_objs[fine_idx] = new TransferMG(lats[fine_idx], lats[coarse_idx], null_vectors, true, false, QMG_DOUBLE_PROJECTION);
 
     // Push a new level on the multigrid object! Also, save the global null vector.
     // Arg 1: New lattice
@@ -394,7 +394,7 @@ int main(int argc, char** argv)
 
       // Build a new transfer object,
       delete transfer_objs[fine_idx];
-      transfer_objs[fine_idx] = new TransferMG(lats[fine_idx], lats[coarse_idx], null_vectors, true);
+      transfer_objs[fine_idx] = new TransferMG(lats[fine_idx], lats[coarse_idx], null_vectors, true, false, QMG_DOUBLE_PROJECTION);
 
       // Update a level.
       mg_object->update_level(coarse_idx, lats[coarse_idx], transfer_objs[fine_idx], level_solve_objs[fine_idx], true, true, MultigridMG::QMG_MULTIGRID_PRECOND_ORIGINAL, null_vectors);

@@ -180,6 +180,11 @@ public:
     zero_vector(orig_to_up+lat->get_size_cv()/2, lat->get_size_cv()/2);
   }
 
+  virtual QMGDefaultChirality get_default_chirality()
+  {
+    return QMG_CHIRALITY_GAMMA_5;
+  }
+
   // Custom functions to prepare for eo preconditioned solve.
   // b_new = (4 + m^2) b_e - D_{eo} b_o
   void prepare_b(complex<double>* b_new, complex<double>* b)

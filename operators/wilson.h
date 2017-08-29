@@ -142,6 +142,11 @@ public:
     caxy_shuffle_pattern(scale, shuffle, 2, vec, s1_vec, lat->get_volume());
   }
 
+  virtual QMGDefaultChirality get_default_chirality()
+  {
+    return QMG_CHIRALITY_GAMMA_5;
+  }
+
 };
 
 // update gauge links.

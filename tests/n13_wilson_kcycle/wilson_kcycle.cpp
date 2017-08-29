@@ -49,13 +49,13 @@ int main(int argc, char** argv)
   const bool do_spectrum = false;
 
   // Are we performing various colinearity checks?
-  bool do_colinear = true;
+  bool do_colinear = false;
 
   // Do we use eigenvectors as null vectors?
-  bool nulls_are_eigenvectors = true;
+  bool nulls_are_eigenvectors = false;
 
   // Do we grab just positive eigenvectors for null vectors, or all?
-  bool nulls_positive_evec_only = true;
+  bool nulls_positive_evec_only = false;
 
   // Set output precision to be long.
   cout << setprecision(20);
@@ -385,8 +385,8 @@ int main(int argc, char** argv)
     }
 
     // Create and populate a transfer object.
-    // Fine lattice, coarse lattice, null vector(s), perform the block ortho.
-    transfer_objs[i-1] = new TransferMG(lats[i-1], lats[i], null_vectors, true);
+    // Fine lattice, coarse lattice, null vector(s), perform the block ortho, save coeffs, coarse chirality type
+    transfer_objs[i-1] = new TransferMG(lats[i-1], lats[i], null_vectors, true, false, QMG_DOUBLE_PROJECTION);
 
     // Prepare a new LevelSolveMG object for the new level.
     level_solve_objs[i-1] = new StatefulMultigridMG::LevelSolveMG;

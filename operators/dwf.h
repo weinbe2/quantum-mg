@@ -126,6 +126,11 @@ public:
     zero_vector_blas(orig_to_up+1, 2, lat->get_size_cv()/2);*/
   }
 
+  virtual QMGDefaultChirality get_default_chirality()
+  {
+    return QMG_CHIRALITY_GAMMA_5;
+  }
+
 };
 
 // update gauge links.

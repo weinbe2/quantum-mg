@@ -73,6 +73,35 @@ enum QMGStencilType
   QMG_MATVEC_RBJ_MDAGGER_M = 8, // Apply rbj M^dagger
 };
 
+// What's the default naive chirality op, gamma_5 or sigma_1?
+enum QMGDefaultChirality
+{
+  QMG_CHIRALITY_NONE = 0,
+  QMG_CHIRALITY_GAMMA_5 = 1,
+  QMG_CHIRALITY_SIGMA_1 = 2,
+};
+
+// Enum for "what type of" gamma 5 to apply:
+// gamma_5, sigma_1, gamma_5^{L/R}, etc.
+enum QMGSigmaType
+{
+  QMG_SIGMA_NONE = 0, // just copy
+  QMG_SIGMA_DEFAULT = 1, // default of either gamma_5 or sigma_1
+  QMG_GAMMA_5 = 2, // gamma_5. may be overriden by derived functions.
+  QMG_SIGMA_3 = 2, // sigma_3.
+  QMG_SIGMA_1 = 3, // sigma_1
+  QMG_GAMMA_5_L = 4, // RBJ only. Equals B \gamma_5/\sigma_1.
+  QMG_SIGMA_1_L = 4, 
+  QMG_GAMMA_5_R = 5, // RBJ only. Equals \gamma_5/\sigma_1 B^{-1}.
+  QMG_SIGMA_1_R = 5,
+  QMG_GAMMA_5_PRIME = 6, // Uses default.
+  QMG_SIGMA_1_PRIME = 6,
+  QMG_GAMMA_5_L_PRIME = 7, // Coarse op only, for coarsening rbj op.
+  QMG_SIGMA_1_L_PRIME = 7, // Equals U^{-\dagger} \gamma_5^L L
+  QMG_GAMMA_5_R_PRIME = 8, // Coarse op only, for coarsening rbj op.
+  QMG_SIGMA_1_R_PRIME = 8, // Equals U \gamma_5^R L^{-\dagger}
+};
+
 
 // Special C function wrappers for stencil applications.
 void apply_stencil_2D_M(complex<double>* lhs, complex<double>* rhs, void* extra_data);
@@ -933,6 +962,9 @@ public:
   {
     copy_vector(s1_vec, vec, lat->get_size_cv());
   }
+
+  // What's the default chirality?
+  virtual QMGDefaultChirality get_default_chirality() = 0;
 
 public:
   //////////////////////////////
