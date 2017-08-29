@@ -73,6 +73,12 @@ public:
   // We do support separate left and right null vectors.
   complex<double>** restrict_null_vectors;
 
+  // If we save the Cholesky (for symmetric) or LU (for asymmetric)
+  // from the block (bi-)ortho, we save it here.
+  complex<double>* block_cholesky;
+  complex<double>* block_L;
+  complex<double>* block_U;
+
 private:
   // Declaration of internal function to perform block orthonormalization.
   // We define it below.
@@ -97,10 +103,12 @@ public:
   // a flag about performing block orthonormalization (default true).
   // If the null vectors are pre-block orthonormalized, it might make sense
   // to not waste time re-orthonormalizing them. 
-  TransferMG(Lattice2D* in_fine_lat, Lattice2D* in_coarse_lat, complex<double>** in_null_vectors, bool do_block_ortho = true)
+  TransferMG(Lattice2D* in_fine_lat, Lattice2D* in_coarse_lat, complex<double>** in_null_vectors, bool do_block_ortho = true, bool save_decomp = false)
     : fine_lat(in_fine_lat), coarse_lat(in_coarse_lat), const_num_null_vec(coarse_lat->get_nc()),
       const_coarse_volume(coarse_lat->get_volume()), blocksizes(0), coarse_map(0),
-      null_vectors(0), restrict_null_vectors(0), is_init(false)
+      null_vectors(0), restrict_null_vectors(0), 
+      block_cholesky(0), block_L(0), block_U(0),
+      is_init(false)
   {
 
     // Learn the blocksizes. 
@@ -129,11 +137,29 @@ public:
       copy_vector(null_vectors[i], in_null_vectors[i], fine_lat->get_size_cv());
     }
 
+    // If we're saving the Cholesky from the block ortho,
+    // allocate it here.
+    if (save_decomp)
+    {
+      block_cholesky = allocate_vector<complex<double>>(in_coarse_lat->get_size_cm());
+      zero_vector(block_cholesky, in_coarse_lat->get_size_cm());
+    }
+
     // Block orthonormalize, if requested.
     if (do_block_ortho)
     {
       block_orthonormalize();
-      block_orthonormalize();
+      if (block_cholesky != 0)
+      {
+        std::complex<double>* backup = block_cholesky;
+        block_cholesky = 0;
+        block_orthonormalize();
+        block_cholesky = backup;
+      }
+      else
+      {
+        block_orthonormalize();
+      }
     }
 
     // We're good!
@@ -147,8 +173,8 @@ public:
   // above.
   TransferMG(Lattice2D* in_fine_lat, Lattice2D* in_coarse_lat,
       complex<double>** in_prolong_null_vectors, complex<double>** in_restrict_null_vectors,
-      bool do_block_bi_ortho = true)
-    : TransferMG(in_fine_lat, in_coarse_lat, in_prolong_null_vectors, false)
+      bool do_block_bi_ortho = true, bool save_decomp = false)
+    : TransferMG(in_fine_lat, in_coarse_lat, in_prolong_null_vectors, false, false)
   {
 
     // Copy in restrict vectors. 
@@ -159,11 +185,33 @@ public:
       copy_vector(restrict_null_vectors[i], in_restrict_null_vectors[i], fine_lat->get_size_cv());
     }
 
+    // If we're saving the LU from the block bi-ortho,
+    // allocate it here.
+    if (save_decomp)
+    {
+      block_L = allocate_vector<complex<double>>(in_coarse_lat->get_size_cm());
+      block_U = allocate_vector<complex<double>>(in_coarse_lat->get_size_cm());
+      zero_vector(block_L, in_coarse_lat->get_size_cm());
+      zero_vector(block_U, in_coarse_lat->get_size_cm());
+    }
+
     // Block bi-orthonormalize, if requested.
     if (do_block_bi_ortho)
     {
       block_bi_orthonormalize();
-      block_bi_orthonormalize();
+
+      if (block_L != 0 && block_U != 0)
+      {
+        std::complex<double>* backup_L = block_L;
+        std::complex<double>* backup_U = block_U;
+        block_L = 0; block_U = 0;
+        block_bi_orthonormalize();
+        block_L = backup_L; block_U = backup_U;
+      }
+      else
+      {
+        block_bi_orthonormalize();
+      }
     }
 
     // We're good!
@@ -190,6 +238,18 @@ public:
         if (restrict_null_vectors[i] != 0) { deallocate_vector(&restrict_null_vectors[i]); }
       }
       delete[] restrict_null_vectors;
+    }
+    if (block_cholesky != 0)
+    {
+      deallocate_vector(&block_cholesky);
+    }
+    if (block_L != 0)
+    {
+      deallocate_vector(&block_L);
+    }
+    if (block_U != 0)
+    {
+      deallocate_vector(&block_U);
     }
     if (coarse_map != 0)
     {
@@ -227,6 +287,33 @@ public:
   bool is_symmetric()
   {
     return (restrict_null_vectors == 0);
+  }
+
+  // Expose cholesky blocks.
+  void copy_cholesky(complex<double>* save_cholesky)
+  {
+    if (block_cholesky == 0)
+    {
+      std::cout << "[QMG-WARNING]: In expose_cholesky, block Cholesky has not been computed.\n";
+    }
+    else
+    {
+      copy_vector(save_cholesky, block_cholesky, coarse_lat->get_size_cm());
+    }
+  }
+
+  // Expose LU blocks.
+  void copy_LU(complex<double>* save_L, complex<double>* save_U)
+  {
+    if (block_L == 0 || block_U == 0)
+    {
+      std::cout << "[QMG-WARNING]: In expose_LU, block LU has not been computed.\n";
+    }
+    else
+    {
+      copy_vector(save_L, block_L, coarse_lat->get_size_cm());
+      copy_vector(save_U, block_U, coarse_lat->get_size_cm());
+    }
   }
 
 
@@ -409,6 +496,7 @@ void TransferMG::block_orthonormalize()
   // Values.
   const int fine_size_cv = fine_lat->get_size_cv();
   const int coarse_size_cv = coarse_lat->get_size_cv();
+  const int coarse_vol = coarse_lat->get_volume();
   const int coarse_dof = coarse_lat->get_nc();
 
   // Temporary vectors. 
@@ -435,6 +523,15 @@ void TransferMG::block_orthonormalize()
       // This is the <\vec{i},\vec{j}> dot product in Gram-Schmidt.
       restrict_f2c(null_vectors[i], coarse_cv_2, &null_vectors[j], 1);
 
+      // If we're saving a Cholesky decomp, copy it in here.
+      if (block_cholesky != 0)
+      {
+        // Even if we only restrict with one vector, the restrict function
+        // knows the real Nc: we always grab from the first color component
+        // of coarse_cv_2.
+        copy_vector_blas(block_cholesky + j*coarse_dof + i, coarse_dof*coarse_dof, coarse_cv_2, coarse_dof, coarse_vol);
+      }
+
       // Prolong again with null vector i.
       // This forms <\vec{i},\vec{j}> \vec{j}.
       prolong_c2f(coarse_cv_2, fine_cv_1, &null_vectors[j], 1);
@@ -456,6 +553,17 @@ void TransferMG::block_orthonormalize()
     // Prepare to normalize. This requires taking the inverse sqrt of
     // <\vec{i}, \vec{i}>. The '0' is because it doesn't need any info passed in.
     arb_local_function_vector(coarse_cv_2, inv_real_sqrt, 0, coarse_size_cv);
+
+    // If we're saving a Cholesky decomp, copy it in here.
+    if (block_cholesky != 0)
+    {
+      cinvx(coarse_cv_2, coarse_size_cv);
+      // Even if we only restrict with one vector, the restrict function
+      // knows the real Nc: we always grab from the first color component
+      // of coarse_cv_2.
+      copy_vector_blas(block_cholesky + i*(coarse_dof+1), coarse_dof*coarse_dof, coarse_cv_2, coarse_dof, coarse_vol);
+      cinvx(coarse_cv_2, coarse_size_cv);
+    }
 
     // Prolong the inverse norm with null vector i. 
     // This is block \vec{i}/sqrt(<\vec{i}, \vec{i}>).
@@ -481,6 +589,7 @@ void TransferMG::block_bi_orthonormalize()
   // Values.
   const int fine_size_cv = fine_lat->get_size_cv();
   const int coarse_size_cv = coarse_lat->get_size_cv();
+  const int coarse_vol = coarse_lat->get_volume();
   const int coarse_dof = coarse_lat->get_nc();
 
   // Temporary vectors. 
@@ -509,6 +618,15 @@ void TransferMG::block_bi_orthonormalize()
       // This is the <\restrict{i},\prolong{j}> dot product.
       restrict_f2c(null_vectors[i], coarse_cv_2, &restrict_null_vectors[j], 1);
 
+      // If we're saving an LU decomp, copy U in here.
+      if (block_U != 0)
+      {
+        // Even if we only restrict with one vector, the restrict function
+        // knows the real Nc: we always grab from the first color component
+        // of coarse_cv_2.
+        copy_vector_blas(block_U + j*coarse_dof + i, coarse_dof*coarse_dof, coarse_cv_2, coarse_dof, coarse_vol);
+      }
+
       // Prolong again with null vector i.
       // This forms <\restrict{i},\prolong{j}> \prolong{j}.
       prolong_c2f(coarse_cv_2, fine_cv_1, &null_vectors[j], 1);
@@ -524,6 +642,17 @@ void TransferMG::block_bi_orthonormalize()
       // Restrict restricting null vector i with (already ortho'd null vector) j.
       // This is the <\prolong{i},\restrict{j}> dot product.
       restrict_f2c(restrict_null_vectors[i], coarse_cv_2, &null_vectors[j], 1);
+
+      // If we're saving an LU decomp, copy L in here.
+      if (block_L != 0)
+      {
+        // Even if we only restrict with one vector, the restrict function
+        // knows the real Nc: we always grab from the first color component
+        // of coarse_cv_2.
+        // Remark: We really should be copying in the complex conjugate.
+        // We do that in one swoop at the end.
+        copy_vector_blas(block_L + i*coarse_dof + j, coarse_dof*coarse_dof, coarse_cv_2, coarse_dof, coarse_vol);
+      }
 
       // Prolong again with null vector i.
       // This forms <\prolong{i},\restrict{j}> \restrict{j}.
@@ -549,6 +678,23 @@ void TransferMG::block_bi_orthonormalize()
     // <\restrict{i}, \prolong{i}>. The '0' is because it doesn't need any info passed in.
     arb_local_function_vector(coarse_cv_2, inv_phase_abs_sqrt, 0, coarse_size_cv);
 
+    // If we're saving an LU, copy L in here.
+    if (block_L != 0)
+    {
+      cinvx(coarse_cv_2, coarse_size_cv);
+      // Even if we only restrict with one vector, the restrict function
+      // knows the real Nc: we always grab from the first color component
+      // of coarse_cv_2.
+
+      // It's sort of goofy that this works. The above function takes the
+      // inverse square root of the mag, but preserves the phase.
+      // This function inverts that, which flips the phase...
+      // and then we do an overall conj of L below, which flips the phase
+      // back to what we want. I lol'd.
+      copy_vector_blas(block_L + i*(coarse_dof+1), coarse_dof*coarse_dof, coarse_cv_2, coarse_dof, coarse_vol);
+      cinvx(coarse_cv_2, coarse_size_cv);
+    }
+
     // Prolong the inverse norm with null vector i. 
     // This is block phases \restrict{i}/(~sqrt(<\restrict{i}, \prolong{i}>)).
     prolong_c2f(coarse_cv_2, fine_cv_1, &restrict_null_vectors[i], 1);
@@ -561,6 +707,17 @@ void TransferMG::block_bi_orthonormalize()
 
     abs_vector(coarse_cv_2, coarse_size_cv);
 
+    // If we're saving an LU, copy U in here.
+    if (block_U != 0)
+    {
+      cinvx(coarse_cv_2, coarse_size_cv);
+      // Even if we only restrict with one vector, the restrict function
+      // knows the real Nc: we always grab from the first color component
+      // of coarse_cv_2.
+      copy_vector_blas(block_U + i*(coarse_dof+1), coarse_dof*coarse_dof, coarse_cv_2, coarse_dof, coarse_vol);
+      cinvx(coarse_cv_2, coarse_size_cv);
+    }
+
     // Prolong the inverse norm with prolong null vector i. 
     // This is block \prolong{i}/sqrt(abs(<\restrict{i}, \prolong{i}>)).
     prolong_c2f(coarse_cv_2, fine_cv_1, &null_vectors[i], 1);
@@ -569,6 +726,13 @@ void TransferMG::block_bi_orthonormalize()
     copy_vector(null_vectors[i], fine_cv_1, fine_size_cv);
 
     
+  }
+
+  // If we're doing an LU, conjugate L here.
+  // This is really where all the magic happens.
+  if (block_L != 0)
+  {
+    conj_vector(block_L, coarse_lat->get_size_cm());
   }
 
   // Clean up.

@@ -7,8 +7,8 @@ C_SOURCES =
 C_OBJS    = 
 C_INCLUDES  = generic_vector.h verbosity.h
 C_LIBS    = -lm
-EXAMPLES = transfer_test
-C_EXAMPLES_OBJ = transfer_test.o
+EXAMPLES = transfer_decomp
+C_EXAMPLES_OBJ = transfer_decomp.o
 
 CCX = g++
 #CXXFLAGS =   -std=c99 -g -O2  
@@ -33,7 +33,7 @@ all: $(EXAMPLES)
 %.o:%.cpp	$(INCLUDES)
 	$(CCX) -c  $(CXXFLAGS) $(*:=.cpp)
 
-transfer_test :  $(C_OBJS)
+transfer_decomp :  $(C_OBJS)
 	$(CCX) $@.cpp $(CXXFLAGS)  -o $@ $(C_OBJS) $(C_LIBS)
 
 
