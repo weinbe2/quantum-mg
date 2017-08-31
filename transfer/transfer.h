@@ -122,7 +122,6 @@ public:
       block_cholesky(0), block_L(0), block_U(0),
       doubling(in_doubling), is_init(false)
   {
-
     // Learn the blocksizes. 
     blocksizes = new int[fine_lat->get_nd()];
     fine_sites_per_coarse = fine_lat->get_nc();
@@ -188,7 +187,6 @@ public:
       bool do_block_bi_ortho = true, bool save_decomp = false, QMGDoublingType in_doubling = QMG_DOUBLE_NONE)
     : TransferMG(in_fine_lat, in_coarse_lat, in_prolong_null_vectors, false, false, in_doubling)
   {
-
     // Copy in restrict vectors. 
     restrict_null_vectors = new complex<double>*[coarse_lat->get_nc()];
     for (int i = 0; i < coarse_lat->get_nc(); i++)
@@ -299,6 +297,19 @@ public:
   bool is_symmetric()
   {
     return (restrict_null_vectors == 0);
+  }
+
+  // Query if we saved the decompositions.
+  bool has_decompositions()
+  {
+    if (is_symmetric())
+    {
+      return (block_cholesky != 0);
+    }
+    else
+    {
+      return (block_L != 0 && block_U != 0);
+    }
   }
 
   // Expose cholesky blocks.

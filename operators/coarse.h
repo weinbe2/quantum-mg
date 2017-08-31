@@ -15,6 +15,15 @@ using std::complex;
 #include "stencil/stencil_2d.h"
 #include "transfer/transfer.h"
 
+// Extended gamma_5 types for coarse operators.
+enum QMGSigmaTypeCoarse
+{
+  QMG_SIGMA_1_L = 6, // Coarsened original op. Transfer doubling is via applying an op. Left apply U^{-\dagger} \sigma_1 L.
+  QMG_SIGMA_1_R = 7, // Coarsened original op. Transfer doubling is via applying an op. Right apply \sigma_1 L^{-\dagger}.
+  QMG_SIGMA_1_L_RBJ = 8, // Coarsened rbj op. Transfer doubling is via applying an op. Left apply \sigma_1^L B^{-1}.
+  QMG_SIGMA_1_R_RBJ = 9, // Coarsened rbj op. Transfer doubling is via applying an op. Right apply B \sigma_1^R.
+};
+
 // Build a coarse operator from another stencil and a
 // a transfer object. 
 struct CoarseOperator2D : public Stencil2D
@@ -44,6 +53,10 @@ protected:
   // Save the default chirality.
   QMGDefaultChirality default_chirality;
 
+  // Places to store sigma_1^{L/R} maybe prime, if we need it.
+  complex<double>* sigma_1_L;
+  complex<double>* sigma_1_R;
+
 public:
   // Enum for if we should build the dagger and/or rbjacobi stencil.
   enum QMGCoarseBuildStencil
@@ -60,7 +73,7 @@ public:
 
   // Base constructor to set up a bare stencil.
   CoarseOperator2D(Lattice2D* in_lat, int pieces, bool is_chiral, QMGDefaultChirality def_chiral = QMG_CHIRALITY_NONE, complex<double> in_shift = 0.0, complex<double> in_eo_shift = 0.0, complex<double> in_dof_shift = 0.0)
-    : Stencil2D(in_lat, pieces, in_shift, in_eo_shift, in_dof_shift), is_chiral(is_chiral), use_rbjacobi(false), in_transfer(0), default_chirality(def_chiral)
+    : Stencil2D(in_lat, pieces, in_shift, in_eo_shift, in_dof_shift), is_chiral(is_chiral), use_rbjacobi(false), in_transfer(0), default_chirality(def_chiral), sigma_1_L(0), sigma_1_R(0)
   { ; }
 
   // Base constructor to build a coarse stencil from a fine stencil.
@@ -71,7 +84,7 @@ public:
   // Also need some smart way to deal with the mass (for \gamma_5 ops)
   // Currently this function only transfers identity shifts.
   CoarseOperator2D(Lattice2D* in_lat, Stencil2D* fine_stencil, Lattice2D* fine_lattice, TransferMG* transfer, bool is_chiral = false, bool use_rbjacobi = false, QMGCoarseBuildStencil build_extra = QMG_COARSE_BUILD_ORIGINAL)
-    : Stencil2D(in_lat, QMG_PIECE_CLOVER_HOPPING, 0.0, 0.0, 0.0), fine_lat(fine_lattice), is_chiral(is_chiral), use_rbjacobi(use_rbjacobi), in_transfer(transfer)
+    : Stencil2D(in_lat, QMG_PIECE_CLOVER_HOPPING, 0.0, 0.0, 0.0), fine_lat(fine_lattice), is_chiral(is_chiral), use_rbjacobi(use_rbjacobi), in_transfer(transfer), sigma_1_L(0), sigma_1_R(0)
   {
     const int coarse_vol = lat->get_volume();
     const int coarse_size = lat->get_size_cv();
@@ -458,6 +471,12 @@ public:
     deallocate_vector(&tmp_coarse);
     deallocate_vector(&tmp_fine);
     deallocate_vector(&tmp_Afine);
+
+    if (sigma_1_L != 0)
+      deallocate_vector(&sigma_1_L);
+
+    if (sigma_1_R != 0)
+      deallocate_vector(&sigma_1_R);
   }
 
   // The coarse operator could have any number of dof per sites.
@@ -499,65 +518,6 @@ public:
     }
   }
 
-  // Chirality either does not exist or is internal dof.
-  virtual void chiral_projection(complex<double>* vector, bool is_up)
-  {
-    if (is_chiral)
-    {
-      const int nc = lat->get_nc();
-      if (is_up)
-      {
-        for (int c = 0; c < nc/2; c++)
-          zero_vector_blas(vector+nc/2+c, nc, lat->get_size_cv()/nc);
-      }
-      else
-      {
-        for (int c = 0; c < nc/2; c++)
-          zero_vector_blas(vector+c, nc, lat->get_size_cv()/nc);
-      }
-    }
-  }
-
-  // Copy projection onto up, down.
-  virtual void chiral_projection_copy(complex<double>* orig, complex<double>* dest, bool is_up)
-  {
-    if (is_chiral)
-    {
-      const int nc = lat->get_nc();
-      if (is_up)
-      {
-        for (int c = 0; c < nc/2; c++)
-        {
-          copy_vector_blas(dest+c, orig+c, nc, lat->get_size_cv()/nc);
-          zero_vector_blas(dest+nc/2+c, nc, lat->get_size_cv()/nc);
-        }
-      }
-      else
-      {
-        for (int c = 0; c < nc/2; c++)
-        {
-          copy_vector_blas(dest+nc/2+c, orig+nc/2+c, nc, lat->get_size_cv()/nc);
-          zero_vector_blas(dest+c, nc, lat->get_size_cv()/nc);
-        }
-      }
-    }
-  }
-
-  // Copy the down projection into a new vector, perform the up in place.
-  virtual void chiral_projection_both(complex<double>* orig_to_up, complex<double>* down)
-  {
-    if (is_chiral)
-    {
-      const int nc = lat->get_nc();
-      for (int c = 0; c < nc/2; c++)
-      {
-        copy_vector_blas(down+nc/2+c, orig_to_up+nc/2+c, nc, lat->get_size_cv()/nc);
-        zero_vector_blas(down+c, nc, lat->get_size_cv()/nc);
-        zero_vector_blas(orig_to_up+nc/2+c, nc, lat->get_size_cv()/nc);
-      }
-    }
-  }
-
   // Apply sigma1 in place. Default does nothing.
   virtual void sigma1(complex<double>* vec)
   {
@@ -593,10 +553,342 @@ public:
     caxy_shuffle_pattern(scale, shuffle, my_nc, vec, s1_vec, lat->get_volume());
   }
 
+  // Chirality either does not exist or is internal dof.
+  // Applies either gamma_5 or sigma_1 depending on default chirality.
+  virtual void chiral_projection(complex<double>* vector, bool is_up)
+  {
+    if (is_chiral)
+    {
+      if (default_chirality == QMG_CHIRALITY_GAMMA_5)
+      {
+        const int nc = lat->get_nc();
+        if (is_up)
+        {
+          for (int c = 0; c < nc/2; c++)
+            zero_vector_blas(vector+nc/2+c, nc, lat->get_size_cv()/nc);
+        }
+        else
+        {
+          for (int c = 0; c < nc/2; c++)
+            zero_vector_blas(vector+c, nc, lat->get_size_cv()/nc);
+        }
+      }
+      else if (default_chirality == QMG_CHIRALITY_SIGMA_1)
+      {
+        // Apply sigma1 into a temporary vector.
+        sigma1(extra_cvector, vector);
+        caxpby(is_up ? 0.5 : -0.5, extra_cvector, 0.5, vector, lat->get_size_cv());
+      }
+    }
+  }
+
+  // Copy projection onto up, down.
+  virtual void chiral_projection_copy(complex<double>* orig, complex<double>* dest, bool is_up)
+  {
+    if (is_chiral)
+    {
+      if (default_chirality == QMG_CHIRALITY_GAMMA_5)
+      {
+        const int nc = lat->get_nc();
+        if (is_up)
+        {
+          for (int c = 0; c < nc/2; c++)
+          {
+            copy_vector_blas(dest+c, orig+c, nc, lat->get_size_cv()/nc);
+            zero_vector_blas(dest+nc/2+c, nc, lat->get_size_cv()/nc);
+          }
+        }
+        else
+        {
+          for (int c = 0; c < nc/2; c++)
+          {
+            copy_vector_blas(dest+nc/2+c, orig+nc/2+c, nc, lat->get_size_cv()/nc);
+            zero_vector_blas(dest+c, nc, lat->get_size_cv()/nc);
+          }
+        }
+      }
+      else if (default_chirality == QMG_CHIRALITY_SIGMA_1)
+      {
+        // Apply sigma1 into a temporary vector.
+        sigma1(extra_cvector, orig);
+        caxpbyz(is_up ? 0.5 : -0.5, extra_cvector, 0.5, orig, dest, lat->get_size_cv());
+      }
+    }
+  }
+
+  // Copy the down projection into a new vector, perform the up in place.
+  virtual void chiral_projection_both(complex<double>* orig_to_up, complex<double>* down)
+  {
+    if (is_chiral)
+    {
+      if (default_chirality == QMG_CHIRALITY_GAMMA_5)
+      {
+        const int nc = lat->get_nc();
+        for (int c = 0; c < nc/2; c++)
+        {
+          copy_vector_blas(down+nc/2+c, orig_to_up+nc/2+c, nc, lat->get_size_cv()/nc);
+          zero_vector_blas(down+c, nc, lat->get_size_cv()/nc);
+          zero_vector_blas(orig_to_up+nc/2+c, nc, lat->get_size_cv()/nc);
+        }
+      }
+      else if (default_chirality == QMG_CHIRALITY_SIGMA_1)
+      {
+        // Apply sigma1 into a temporary vector.
+        sigma1(extra_cvector, orig_to_up);
+
+        // Put down into... down.
+        caxpbyz(0.5, orig_to_up, -0.5, extra_cvector, down, lat->get_size_cv());
+
+        // Aaand get up going.
+        caxpy(-1.0, down, orig_to_up, lat->get_size_cv());
+      }
+    }
+  }
+
+  
+
   virtual QMGDefaultChirality get_default_chirality()
   {
     return default_chirality;
   }
+
+
+  // Extended application of a certain chiral op.
+  void apply_sigma(complex<double>* output, complex<double>* input, QMGSigmaTypeCoarse type)
+  {
+    if (!in_transfer->has_decompositions())
+    {
+      std::cout << "[QMG-ERROR]: In CoarseOperator2D, cannot apply apply_sigma() if the transfer op does not have factorizations.\n";
+      return;
+    }
+
+    if (in_transfer->is_symmetric()) // R = P^\dagger
+    {
+      // U = \Sigma, L = \Sigma^\dagger.
+    
+      if (sigma_1_L == 0 || sigma_1_R == 0) // We haven't built these yet.
+      {
+        // Allocate the storage.
+        sigma_1_L = allocate_vector<complex<double>>(lat->get_size_cm());
+        sigma_1_R = allocate_vector<complex<double>>(lat->get_size_cm());
+
+        // In the cholesky case, they're actually equal, we only need
+        // sigma and sigma_inv.
+        complex<double>* sigma = allocate_vector<complex<double>>(lat->get_size_cm());
+        complex<double>* sigma_inv = allocate_vector<complex<double>>(lat->get_size_cm());
+
+        // Grab sigma from the transfer operator.
+        in_transfer->copy_cholesky(sigma);
+
+        // Get inverse of sigma.
+        complex<double>* Qmat = allocate_vector<complex<double>>(lat->get_size_cm());
+        complex<double>* Rmat = allocate_vector<complex<double>>(lat->get_size_cm());
+        zero_vector(Qmat, lat->get_size_cm());
+        zero_vector(Rmat, lat->get_size_cm());
+        cMATx_do_qr_square(sigma, Qmat, Rmat, lat->get_volume(), lat->get_nc());
+        cMATqr_do_xinv_square(Qmat, Rmat, sigma_inv, lat->get_volume(), lat->get_nc());
+
+        // Clean up.
+        deallocate_vector(&Qmat);
+        deallocate_vector(&Rmat);
+
+        // Build up a matrix of sigma_1's. 
+        const int nc = lat->get_nc();
+        const int nc2 = lat->get_nc()*lat->get_nc();
+        double sigma1_single[nc2];
+        for (int i = 0; i < nc2; i++)
+        {
+          sigma1_single[i] = 0.0;
+        }
+        for (int i = 0; i < nc; i++)
+        {
+          if (i < nc/2)
+          {
+            sigma1_single[i*nc + i + (nc/2)] = 1.0;
+          }
+          else
+          {
+            sigma1_single[i*nc + i - (nc/2)] = 1.0;
+          }
+        }
+        complex<double>* sigma1_repeat = allocate_vector<complex<double>>(lat->get_size_cm());
+        zero_vector(sigma1_repeat, lat->get_size_cm());
+        capx_pattern(sigma1_single, nc2, sigma1_repeat, lat->get_volume());
+
+        // sigma_1_L is Sigma^{-\dagger} \sigma_1 \Sigma^\dagger,
+        // but when we left apply we apply the dagger, which is sigma_1_r,
+        // which is Sigma \sigma_1 \Sigma^{-1}
+        complex<double>* extra_cmatrix = allocate_vector<complex<double>>(lat->get_size_cm());
+        cMATxtMATyMATz_square(sigma, sigma1_repeat, extra_cmatrix, lat->get_volume(), lat->get_nc());
+        cMATxtMATyMATz_square(extra_cmatrix, sigma_inv, sigma_1_L, lat->get_volume(), lat->get_nc());
+        deallocate_vector(&extra_cmatrix);
+        copy_vector(sigma_1_R, sigma_1_L, lat->get_size_cm());
+
+        // Aaaaand we're ready!
+        deallocate_vector(&sigma1_repeat);
+        deallocate_vector(&sigma);
+        deallocate_vector(&sigma_inv);
+      }
+
+      switch (type)
+      {
+        case QMG_SIGMA_1_L:
+        case QMG_SIGMA_1_R: // The same in the symmetric case.
+          cMATxy(sigma_1_L, input, output, lat->get_volume(), lat->get_nc(), lat->get_nc());
+          break;
+        case QMG_SIGMA_1_L_RBJ:
+          if (!built_rbj_dagger)
+          {
+            std::cout << "[QMG-ERROR]: In apply_sigma, cannot apply QMG_SIGMA_1_L_RBJ without rbjacobi dagger stencil.\n";
+            copy_vector(output, input, lat->get_size_cv());
+          }
+          else
+          {
+            // Apply B^{-dagger} \sigma_1^L. (since we need to left apply \gamma_5 B^{-1})
+            cMATxy(sigma_1_L, input, extra_cvector, lat->get_volume(), lat->get_nc(), lat->get_nc());
+            cMATxy(rbj_dagger_cinv, extra_cvector, output, lat->get_volume(), lat->get_nc(), lat->get_nc());
+          }
+          break;
+        case QMG_SIGMA_1_R_RBJ:
+          if (!built_rbjacobi)
+          {
+            std::cout << "[QMG-ERROR]: In apply_sigma, cannot apply QMG_SIGMA_1_R_RBJ without rbjacobi stencil.\n";
+            copy_vector(output, input, lat->get_size_cv());
+          }
+          else
+          {
+            // Apply B \sigma_1^R.
+            cMATxy(sigma_1_R, input, extra_cvector, lat->get_volume(), lat->get_nc(), lat->get_nc());
+            cMATxy(clover, extra_cvector, output, lat->get_volume(), lat->get_nc(), lat->get_nc());
+            caxpy(shift, extra_cvector, output, lat->get_size_cv());
+          }
+          break;
+      }
+    }
+    else // R != P^\dagger
+    {
+      if (sigma_1_L == 0 || sigma_1_R == 0) // We haven't built these yet.
+      {
+        // Allocate the storage.
+        sigma_1_L = allocate_vector<complex<double>>(lat->get_size_cm());
+        sigma_1_R = allocate_vector<complex<double>>(lat->get_size_cm());
+
+        // We need U and its inverse, L^\dagger and its inverse.
+        complex<double>* U_mat = allocate_vector<complex<double>>(lat->get_size_cm());
+        complex<double>* U_mat_inv = allocate_vector<complex<double>>(lat->get_size_cm());
+        complex<double>* Ldag_mat = allocate_vector<complex<double>>(lat->get_size_cm());
+        complex<double>* Ldag_mat_inv = allocate_vector<complex<double>>(lat->get_size_cm());
+
+        // Grab L, U from the transfer operator, transpose L.
+        in_transfer->copy_LU(Ldag_mat, U_mat);
+        cMATconjtrans_square(Ldag_mat, lat->get_volume(), lat->get_nc());
+
+        // Prepare to get inverses.
+        complex<double>* Qmat = allocate_vector<complex<double>>(lat->get_size_cm());
+        complex<double>* Rmat = allocate_vector<complex<double>>(lat->get_size_cm());
+
+        // Get inverse of U.
+        zero_vector(Qmat, lat->get_size_cm());
+        zero_vector(Rmat, lat->get_size_cm());
+        cMATx_do_qr_square(U_mat, Qmat, Rmat, lat->get_volume(), lat->get_nc());
+        cMATqr_do_xinv_square(Qmat, Rmat, U_mat_inv, lat->get_volume(), lat->get_nc());
+
+        // Get inverse of L^\dagger
+        zero_vector(Qmat, lat->get_size_cm());
+        zero_vector(Rmat, lat->get_size_cm());
+        cMATx_do_qr_square(Ldag_mat, Qmat, Rmat, lat->get_volume(), lat->get_nc());
+        cMATqr_do_xinv_square(Qmat, Rmat, Ldag_mat_inv, lat->get_volume(), lat->get_nc());
+
+        // Clean up.
+        deallocate_vector(&Qmat);
+        deallocate_vector(&Rmat);
+
+        // Build up a matrix of sigma_1's. 
+        const int nc = lat->get_nc();
+        const int nc2 = lat->get_nc()*lat->get_nc();
+        double sigma1_single[nc2];
+        for (int i = 0; i < nc2; i++)
+        {
+          sigma1_single[i] = 0.0;
+        }
+        for (int i = 0; i < nc; i++)
+        {
+          if (i < nc/2)
+          {
+            sigma1_single[i*nc + i + (nc/2)] = 1.0;
+          }
+          else
+          {
+            sigma1_single[i*nc + i - (nc/2)] = 1.0;
+          }
+        }
+        complex<double>* sigma1_repeat = allocate_vector<complex<double>>(lat->get_size_cm());
+        zero_vector(sigma1_repeat, lat->get_size_cm());
+        capx_pattern(sigma1_single, nc2, sigma1_repeat, lat->get_volume());
+
+        // Prepare to form sigma_1^L and sigma_1^R
+        complex<double>* extra_cmatrix = allocate_vector<complex<double>>(lat->get_size_cm());
+
+        // sigma_1_L is U^{-\dagger} \sigma-1 L
+        // but when we left apply we apply the dagger, 
+        // which is L^\dagger \sigma_1 U^{-1}
+        cMATxtMATyMATz_square(Ldag_mat, sigma1_repeat, extra_cmatrix, lat->get_volume(), lat->get_nc());
+        cMATxtMATyMATz_square(extra_cmatrix, U_mat_inv, sigma_1_L, lat->get_volume(), lat->get_nc());
+
+        // sigma_1^R is U \sigma_1 L^{-\dagger}
+        cMATxtMATyMATz_square(U_mat, sigma1_repeat, extra_cmatrix, lat->get_volume(), lat->get_nc());
+        cMATxtMATyMATz_square(extra_cmatrix, Ldag_mat_inv, sigma_1_R, lat->get_volume(), lat->get_nc());
+
+
+        // Aaaaand we're ready to clean all the things!
+        deallocate_vector(&extra_cmatrix);
+        deallocate_vector(&sigma1_repeat);
+        deallocate_vector(&Ldag_mat);
+        deallocate_vector(&Ldag_mat_inv);
+        deallocate_vector(&U_mat);
+        deallocate_vector(&U_mat_inv);
+      }
+
+      switch (type)
+      {
+        case QMG_SIGMA_1_L:
+        cMATxy(sigma_1_L, input, output, lat->get_volume(), lat->get_nc(), lat->get_nc());
+        break;
+        case QMG_SIGMA_1_R:
+          cMATxy(sigma_1_R, input, output, lat->get_volume(), lat->get_nc(), lat->get_nc());
+          break;
+        case QMG_SIGMA_1_L_RBJ:
+          if (!built_rbj_dagger)
+          {
+            std::cout << "[QMG-ERROR]: In apply_sigma, cannot apply QMG_SIGMA_1_L_RBJ without rbjacobi dagger stencil.\n";
+            copy_vector(output, input, lat->get_size_cv());
+          }
+          else
+          {
+            // Apply B^{-dagger} \sigma_1^L. (since we need to left apply \gamma_5 B^{-1})
+            cMATxy(sigma_1_L, input, extra_cvector, lat->get_volume(), lat->get_nc(), lat->get_nc());
+            cMATxy(rbj_dagger_cinv, extra_cvector, output, lat->get_volume(), lat->get_nc(), lat->get_nc());
+          }
+          break;
+        case QMG_SIGMA_1_R_RBJ:
+          if (!built_rbjacobi)
+          {
+            std::cout << "[QMG-ERROR]: In apply_sigma, cannot apply QMG_SIGMA_1_R_RBJ without rbjacobi stencil.\n";
+            copy_vector(output, input, lat->get_size_cv());
+          }
+          else
+          {
+            // Apply B \sigma_1^R.
+            cMATxy(sigma_1_R, input, extra_cvector, lat->get_volume(), lat->get_nc(), lat->get_nc());
+            cMATxy(clover, extra_cvector, output, lat->get_volume(), lat->get_nc(), lat->get_nc());
+            caxpy(shift, extra_cvector, output, lat->get_size_cv());
+          }
+          break;
+      }
+    }
+    
+  }
+
 
 };
 

@@ -88,18 +88,9 @@ enum QMGSigmaType
   QMG_SIGMA_NONE = 0, // just copy
   QMG_SIGMA_DEFAULT = 1, // default of either gamma_5 or sigma_1
   QMG_GAMMA_5 = 2, // gamma_5. may be overriden by derived functions.
-  QMG_SIGMA_3 = 2, // sigma_3.
   QMG_SIGMA_1 = 3, // sigma_1
-  QMG_GAMMA_5_L = 4, // RBJ only. Equals B \gamma_5/\sigma_1.
-  QMG_SIGMA_1_L = 4, 
-  QMG_GAMMA_5_R = 5, // RBJ only. Equals \gamma_5/\sigma_1 B^{-1}.
-  QMG_SIGMA_1_R = 5,
-  QMG_GAMMA_5_PRIME = 6, // Uses default.
-  QMG_SIGMA_1_PRIME = 6,
-  QMG_GAMMA_5_L_PRIME = 7, // Coarse op only, for coarsening rbj op.
-  QMG_SIGMA_1_L_PRIME = 7, // Equals U^{-\dagger} \gamma_5^L L
-  QMG_GAMMA_5_R_PRIME = 8, // Coarse op only, for coarsening rbj op.
-  QMG_SIGMA_1_R_PRIME = 8, // Equals U \gamma_5^R L^{-\dagger}
+  QMG_GAMMA_5_L_RBJ = 4, // Transfer doubling is via projection. RBJ only. Equals B \gamma_5.
+  QMG_GAMMA_5_R_RBJ = 5, // Transfer doubling is via projection. RBJ only. Equals \gamma_5 B^{-1}
 };
 
 
@@ -965,6 +956,67 @@ public:
 
   // What's the default chirality?
   virtual QMGDefaultChirality get_default_chirality() = 0;
+
+  // Apply a certain chiral op.
+  void apply_sigma(complex<double>* output, complex<double>* input, QMGSigmaType type = QMG_SIGMA_DEFAULT)
+  {
+    switch (type)
+    {
+      case QMG_SIGMA_NONE:
+        copy_vector(output, input, lat->get_size_cv());
+        break;
+      case QMG_SIGMA_DEFAULT:
+        switch (get_default_chirality())
+        {
+          case QMG_CHIRALITY_NONE:
+            copy_vector(output, input, lat->get_size_cv());
+            break;
+          case QMG_CHIRALITY_SIGMA_1:
+            sigma1(output, input);
+            break;
+          case QMG_CHIRALITY_GAMMA_5:
+            gamma5(output, input);
+            break;
+          default:
+            copy_vector(output, input, lat->get_size_cv());
+            break;
+        }
+        break;
+      case QMG_GAMMA_5:
+        gamma5(output, input);
+        break;
+      case QMG_SIGMA_1:
+        sigma1(output, input);
+        break;
+      case QMG_GAMMA_5_R_RBJ:
+        if (!built_rbjacobi)
+        {
+          std::cout << "[QMG-ERROR]: In apply_sigma, cannot apply QMG_GAMMA_5_L_RBJ without rbjacobi stencil.\n";
+          copy_vector(output, input, lat->get_size_cv());
+        }
+        else
+        {
+          // Apply B \gamma_5. 
+          gamma5(extra_cvector, input);
+          cMATxy(clover, extra_cvector, output, lat->get_volume(), lat->get_nc(), lat->get_nc());
+          caxpy(shift, extra_cvector, output, lat->get_size_cv()); // also add the mass.
+        }
+        break;
+      case QMG_GAMMA_5_L_RBJ:
+        if (!built_rbj_dagger)
+        {
+          std::cout << "[QMG-ERROR]: In apply_sigma, cannot apply QMG_GAMMA_5_R_RBJ without rbjacobi stencil.\n";
+          copy_vector(output, input, lat->get_size_cv());
+        }
+        else
+        {
+          // Apply B^{-dagger} \gamma_5. (since we need to left apply \gamma_5 B^{-1})
+          gamma5(extra_cvector, input);
+          cMATxy(rbj_dagger_cinv, extra_cvector, output, lat->get_volume(), lat->get_nc(), lat->get_nc());
+        }
+        break;
+    }
+  }
 
 public:
   //////////////////////////////
