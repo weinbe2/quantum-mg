@@ -214,11 +214,15 @@ public:
     // Deflate coarsest. Ignored if we aren't doing CGNE/CGNR
     bool deflate;
 
+    // Shift coarsest. Ignored if we aren't doing CGNE/CGNR.
+    double normal_shift;
+
     // By default, there's "no" stopping condition.
     CoarsestSolveMG()
       : coarsest_stencil_app(QMG_MATVEC_ORIGINAL),
         coarsest_tol(1e-20), coarsest_iters(100000000),
-        coarsest_restart_freq(32), deflate(true)
+        coarsest_restart_freq(32), deflate(true),
+        normal_shift(0.0)
     { ; }
   };
 
@@ -632,7 +636,7 @@ public:
     if (num_low > 0)
     {
       // Grab bottom of spectrum.
-      arpack = new arpack_dcn(get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv(), 10000, 1e-5,
+      arpack = new arpack_dcn(get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv(), 100000, 1e-5,
                     get_stencil(get_num_levels()-1)->get_apply_function(coarsest_solve->coarsest_stencil_app),
                     get_stencil(get_num_levels()-1),
                     num_low, 3*num_low);
@@ -645,7 +649,7 @@ public:
     if (num_high > 0)
     {
       // Get top of spectrum.
-      arpack = new arpack_dcn(get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv(), 10000, 1e-5,
+      arpack = new arpack_dcn(get_stencil(get_num_levels()-1)->get_lattice()->get_size_cv(), 100000, 1e-5,
                     get_stencil(get_num_levels()-1)->get_apply_function(coarsest_solve->coarsest_stencil_app),
                     get_stencil(get_num_levels()-1),
                     num_high, 3*num_high);
@@ -685,6 +689,25 @@ public:
   {
     return coarsest_evecs;
   }
+
+protected:
+  // Special structure, function if we need to do a shifted solve.
+  struct ShiftedFunctionStruct
+  {
+    matrix_op_cplx function;
+    void* extra_data;
+    complex<double> extra_shift;
+    int length;
+  };
+
+  static void shift_function(complex<double>* out, complex<double>* in, void* data)
+  {
+    ShiftedFunctionStruct* shift_struct = (ShiftedFunctionStruct*)data;
+    shift_struct->function(out, in, shift_struct->extra_data);
+    caxpy(shift_struct->extra_shift, in, out, shift_struct->length);
+  }
+
+public:
 
   // Need to add counters for prepare/reconstruct. 
   static void mg_preconditioner(complex<double>* lhs, complex<double>* rhs, int size, void* extra_data, inversion_verbose_struct* verb)
@@ -855,9 +878,23 @@ public:
         }
         else
         {
-          invif = minv_vector_cg(e_coarse, r_coarse_prep, coarse_size_solve,
+          if (mg_object->get_coarsest_solve()->normal_shift != 0.0)
+          {
+            ShiftedFunctionStruct shift_struct;
+            shift_struct.function = apply_coarse_M;
+            shift_struct.extra_data = (void*)coarse_stencil;
+            shift_struct.extra_shift = mg_object->get_coarsest_solve()->normal_shift;
+            shift_struct.length = coarse_size_solve;
+            invif = minv_vector_cg(e_coarse, r_coarse_prep, coarse_size_solve,
+                            coarse_max_iter, coarse_tol*rnorm/rnorm_prep, 
+                            shift_function, (void*)&shift_struct, &verb2);
+          }
+          else
+          {
+            invif = minv_vector_cg(e_coarse, r_coarse_prep, coarse_size_solve,
                             coarse_max_iter, coarse_tol*rnorm/rnorm_prep, 
                             apply_coarse_M, (void*)coarse_stencil, &verb2);
+          }
         }
       }
       else
@@ -873,9 +910,23 @@ public:
         }
         else
         {
-          invif = minv_vector_cg_restart(e_coarse, r_coarse_prep, coarse_size_solve,
+          if (mg_object->get_coarsest_solve()->normal_shift != 0.0)
+          {
+            ShiftedFunctionStruct shift_struct;
+            shift_struct.function = apply_coarse_M;
+            shift_struct.extra_data = (void*)coarse_stencil;
+            shift_struct.extra_shift = mg_object->get_coarsest_solve()->normal_shift;
+            shift_struct.length = coarse_size_solve;
+            invif = minv_vector_cg_restart(e_coarse, r_coarse_prep, coarse_size_solve,
+                            coarse_max_iter, coarse_tol*rnorm/rnorm_prep, coarse_restart, 
+                            shift_function, (void*)&shift_struct, &verb2);
+          }
+          else
+          {
+            invif = minv_vector_cg_restart(e_coarse, r_coarse_prep, coarse_size_solve,
                             coarse_max_iter, coarse_tol*rnorm/rnorm_prep, coarse_restart, 
                             apply_coarse_M, (void*)coarse_stencil, &verb2);
+          }
         }
       }
     }
