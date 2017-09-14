@@ -211,8 +211,10 @@ public:
     // Restart frequency. -1 means don't restart.
     int coarsest_restart_freq;
 
+#ifndef NO_ARPACK
     // Deflate coarsest. Ignored if we aren't doing CGNE/CGNR
     bool deflate;
+#endif
 
     // Shift coarsest. Ignored if we aren't doing CGNE/CGNR.
     double normal_shift;
@@ -221,7 +223,10 @@ public:
     CoarsestSolveMG()
       : coarsest_stencil_app(QMG_MATVEC_ORIGINAL),
         coarsest_tol(1e-20), coarsest_iters(100000000),
-        coarsest_restart_freq(32), deflate(true),
+        coarsest_restart_freq(32),
+#ifndef NO_ARPACK
+        deflate(true),
+#endif
         normal_shift(0.0)
     { ; }
   };
@@ -238,17 +243,20 @@ protected:
   // Information on the coarsest level solve.
   CoarsestSolveMG* coarsest_solve; 
 
+#ifndef NO_ARPACK
   // Storage for eigenvalues, vectors on coarsest level.
   int coarsest_deflated;
   complex<double>* coarsest_evals;
   complex<double>** coarsest_evecs;
-
+#endif
 public:
 
   // Simple constructor.
   StatefulMultigridMG(Lattice2D* in_lat, Stencil2D* in_stencil, CoarsestSolveMG* in_coarsest_solve)
-    : MultigridMG(in_lat, in_stencil), coarsest_solve(in_coarsest_solve),
-      coarsest_deflated(0), coarsest_evals(0), coarsest_evecs(0)
+    : MultigridMG(in_lat, in_stencil), coarsest_solve(in_coarsest_solve)
+#ifndef NO_ARPACK
+      , coarsest_deflated(0), coarsest_evals(0), coarsest_evecs(0)
+#endif
   {
     // Set the current level to zero.
     current_level = 0;
@@ -265,6 +273,7 @@ public:
       dslash_tracker_list[i] = 0;
     }
 
+#ifndef NO_ARPACK
     // Clean up eigenvectors as appropriate.
     if (coarsest_evals != 0)
     {
@@ -279,6 +288,7 @@ public:
       }
       delete[] coarsest_evecs;
     }
+#endif
   }
 
   // Set the multigrid level.
@@ -589,6 +599,7 @@ public:
     }
   }
 
+#ifndef NO_ARPACK
   // Routine to deflate coarsest level.
   void deflate_coarsest(int num_low, int num_high, bool print_evals = false)
   {
@@ -689,6 +700,7 @@ public:
   {
     return coarsest_evecs;
   }
+#endif // ifndef NO_ARPACK
 
 protected:
   // Special structure, function if we need to do a shifted solve.
@@ -852,6 +864,7 @@ public:
                               coarse_stencil_type == QMG_MATVEC_MDAGGER_M ||
                               coarse_stencil_type == QMG_MATVEC_RBJ_M_MDAGGER ||
                               coarse_stencil_type == QMG_MATVEC_RBJ_MDAGGER_M);
+#ifndef NO_ARPACK
       // Deflate if we're set to.
       if (coarsest_normal && mg_object->get_coarsest_solve()->deflate && mg_object->get_coarsest_deflated() > 0)
       {
@@ -866,6 +879,7 @@ public:
           caxpy(bra_n_ket_b/evals[i], evecs[i], e_coarse, coarse_size_solve);
         }
       }
+#endif
 
       if (coarse_restart == -1)
       {

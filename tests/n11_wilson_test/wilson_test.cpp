@@ -13,6 +13,7 @@ using namespace std;
 #include "verbosity/verbosity.h"
 #include "inverters/inverter_struct.h"
 #include "inverters/generic_bicgstab_l.h"
+//#include "inverters/generic_tfqmr.h"
 
 // QMG
 #include "lattice/lattice.h"
@@ -99,6 +100,7 @@ int main(int argc, char** argv)
 
   // Perform a BiCGstab-L inversion
   inversion_info invif = minv_vector_bicgstab_l(lhs, rhs, cv_size, max_iter, tol, bicgstab_l, apply_stencil_2D_M, (void*)wilson_stencil, verb);
+  //inversion_info invif = minv_vector_tfqmr(lhs, rhs, cv_size, max_iter, tol, apply_stencil_2D_M, (void*)wilson_stencil, verb);
 
   // Check results.
   if (invif.success == true)
