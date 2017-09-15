@@ -26,7 +26,7 @@ protected:
   // Temporary space for eo solve.
   complex<double>* tmp_eo_space;
 
-  double mass;
+  complex<double> mass;
   int Ls;
   double M5; 
 
@@ -36,7 +36,7 @@ public:
   void update_links(complex<double>* gauge_links);
 
   // Base constructor.
-  Wilson2D(Lattice2D* in_lat, complex<double> mass, complex<double>* gauge_links, int Ls = 6, double M5 = -1.0)
+  Dwf2D(Lattice2D* in_lat, complex<double> mass, complex<double>* gauge_links, int Ls = 6, double M5 = -1.0)
     : Stencil2D(in_lat, QMG_PIECE_CLOVER_HOPPING, M5, 0.0, 0.0), mass(mass), Ls(Ls), M5(M5)
   {
     if (lat->get_nc() != 2*Ls)
@@ -52,7 +52,7 @@ public:
     update_links(gauge_links);
   }
 
-  ~Wilson2D()
+  ~Dwf2D()
   {
     deallocate_vector(&tmp_eo_space);
   }
@@ -64,7 +64,7 @@ public:
   // Wilson has two dof per site.
   static int get_dof(int i = 0)
   {
-    return 2*Ls;
+    return -1;
   }
 
   // Wilson has a sense of chirality.
@@ -136,8 +136,14 @@ public:
 // update gauge links.
 void Dwf2D::update_links(complex<double>* gauge_links)
 {
+  // Iterators.
+  int j;
+
   // Prepare for complex numbers.
   const complex<double> cplxI(0.0,1.0);
+
+  // Yup.
+  const double wilson_coeff = 1.0;
 
   // Get the color matrix size. We stride with this when we
   // use the blas'.
@@ -145,54 +151,73 @@ void Dwf2D::update_links(complex<double>* gauge_links)
 
   // Get the volume (number of sites).
   const int volume = lat->get_volume();
-
-  // Zero everything out since the Dwf operator is rather sparse.
-
-
-  // The clover term is the 2*wilson_term on the identity.
-  constant_vector_blas(clover, nc2, 2.0*wilson_coeff, volume);
-  constant_vector_blas(clover+1, nc2, 0.0, volume);
-  constant_vector_blas(clover+2, nc2, 0.0, volume);
-  constant_vector_blas(clover+3, nc2, 2.0*wilson_coeff, volume);
-
-
-  // The hopping term is a bit more complicated, but not by much!
   const int cm_size = lat->get_size_cm();
-
-  // Get the step for the nc = 1 gauge fields... oi.
   const int u1_cm_size = cm_size/nc2; 
 
-  // +x
-  // structure: 0.5*{{-w, 1},{1,-w}}*U_x(x)
-  caxy_blas(-0.5*wilson_coeff, gauge_links, 1, hopping, nc2, volume);
-  caxy_blas(0.5, gauge_links, 1, hopping+1, nc2, volume);
-  caxy_blas(0.5, gauge_links, 1, hopping+2, nc2, volume);
-  caxy_blas(-0.5*wilson_coeff, gauge_links, 1, hopping+3, nc2, volume);
+  // Zero everything out since the Dwf operator is rather sparse.
+  zero_vector(clover, cm_size);
+  zero_vector(hopping, 4*cm_size);
 
-  // +y
-  // structure: 0.5*{{-w, -I},{I,-w}}
-  caxy_blas(-0.5*wilson_coeff, gauge_links+u1_cm_size, 1, hopping+cm_size, nc2, volume);
-  caxy_blas(-0.5*cplxI, gauge_links+u1_cm_size, 1, hopping+cm_size+1, nc2, volume);
-  caxy_blas(0.5*cplxI, gauge_links+u1_cm_size, 1, hopping+cm_size+2, nc2, volume);
-  caxy_blas(-0.5*wilson_coeff, gauge_links+u1_cm_size, 1, hopping+cm_size+3, nc2, volume);
+  // M5 goes into the shift with this operator.
 
-  // -x requires a cshift, conj.
-  // structure: 0.5*{{-w, -1},{-1, -w}}
-  cshift(priv_cmatrix, gauge_links, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_EVENODD, 1, lat);
-  conj_vector(priv_cmatrix, u1_cm_size);
-  caxy_blas(-0.5*wilson_coeff, priv_cmatrix, 1, hopping+2*cm_size, nc2, volume);
-  caxy_blas(-0.5, priv_cmatrix, 1, hopping+2*cm_size+1, nc2, volume);
-  caxy_blas(-0.5, priv_cmatrix, 1, hopping+2*cm_size+2, nc2, volume);
-  caxy_blas(-0.5*wilson_coeff, priv_cmatrix, 1, hopping+2*cm_size+3, nc2, volume);
+  // Since this is Shamir, there are Ls copies of the Wilson op along the 2x2 block diagonal.
+  for (j = 0; j < Ls; j++)
+  {
+    // Clover term.
+    constant_vector_blas(clover+j*(4*Ls+2), nc2, 3.0*wilson_coeff, volume);
+    constant_vector_blas(clover+j*(4*Ls+2)+2*Ls+1, nc2, 3.0*wilson_coeff, volume);
 
-  // -y requires a cshift, conj
-  // structure: 0.5*{{-w, I},{-I,-w}}
-  cshift(priv_cmatrix, gauge_links + u1_cm_size, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_EVENODD, 1, lat);
-  conj_vector(priv_cmatrix, u1_cm_size);
-  caxy_blas(-0.5*wilson_coeff, priv_cmatrix, 1, hopping+3*cm_size, nc2, volume);
-  caxy_blas(0.5*cplxI, priv_cmatrix, 1, hopping+3*cm_size+1, nc2, volume);
-  caxy_blas(-0.5*cplxI, priv_cmatrix, 1, hopping+3*cm_size+2, nc2, volume);
-  caxy_blas(-0.5*wilson_coeff, priv_cmatrix, 1, hopping+3*cm_size+3, nc2, volume);
+    // Hopping.
+
+    // +x
+    caxpy_blas(-0.5*wilson_coeff, gauge_links, 1, hopping+j*(4*Ls+2), nc2, volume);
+    caxpy_blas(0.5, gauge_links, 1, hopping+j*(4*Ls+2)+1, nc2, volume);
+    caxpy_blas(0.5, gauge_links, 1, hopping+j*(4*Ls+2)+2*Ls, nc2, volume);
+    caxpy_blas(-0.5*wilson_coeff, gauge_links, 1, hopping+j*(4*Ls+2)+2*Ls+1, nc2, volume);
+
+    // +y
+    caxpy_blas(-0.5*wilson_coeff, gauge_links+u1_cm_size, 1, hopping+cm_size+j*(4*Ls+2), nc2, volume);
+    caxpy_blas(-0.5*cplxI, gauge_links+u1_cm_size, 1, hopping+cm_size+j*(4*Ls+2)+1, nc2, volume);
+    caxpy_blas(0.5*cplxI, gauge_links+u1_cm_size, 1, hopping+cm_size+j*(4*Ls+2)+2*Ls, nc2, volume);
+    caxpy_blas(-0.5*wilson_coeff, gauge_links+u1_cm_size, 1, hopping+cm_size+j*(4*Ls+2)+2*Ls+1, nc2, volume);
+
+    // -x requires a cshift, conj.
+    // structure: 0.5*{{-w, -1},{-1, -w}}
+    cshift(priv_cmatrix, gauge_links, QMG_CSHIFT_FROM_XM1, QMG_EO_FROM_EVENODD, 1, lat);
+    conj_vector(priv_cmatrix, u1_cm_size);
+    caxpy_blas(-0.5*wilson_coeff, priv_cmatrix, 1, hopping+2*cm_size+j*(4*Ls+2), nc2, volume);
+    caxpy_blas(-0.5, priv_cmatrix, 1, hopping+2*cm_size+j*(4*Ls+2)+1, nc2, volume);
+    caxpy_blas(-0.5, priv_cmatrix, 1, hopping+2*cm_size+j*(4*Ls+2)+2*Ls, nc2, volume);
+    caxpy_blas(-0.5*wilson_coeff, priv_cmatrix, 1, hopping+2*cm_size+j*(4*Ls+2)+2*Ls+1, nc2, volume);
+
+    // -y requires a cshift, conj
+    // structure: 0.5*{{-w, I},{-I,-w}}
+    cshift(priv_cmatrix, gauge_links + u1_cm_size, QMG_CSHIFT_FROM_YM1, QMG_EO_FROM_EVENODD, 1, lat);
+    conj_vector(priv_cmatrix, u1_cm_size);
+    caxpy_blas(-0.5*wilson_coeff, priv_cmatrix, 1, hopping+3*cm_size+j*(4*Ls+2), nc2, volume);
+    caxpy_blas(0.5*cplxI, priv_cmatrix, 1, hopping+3*cm_size+j*(4*Ls+2)+1, nc2, volume);
+    caxpy_blas(-0.5*cplxI, priv_cmatrix, 1, hopping+3*cm_size+j*(4*Ls+2)+2*Ls, nc2, volume);
+    caxpy_blas(-0.5*wilson_coeff, priv_cmatrix, 1, hopping+3*cm_size+j*(4*Ls+2)+2*Ls+1, nc2, volume);
+  }
+
+  // Then the clover has a few additional pieces.
+  // Off diagonal P_+ and P_-.
+  for (j = 0; j < Ls-1; j++)
+  {
+    // -P_+
+    constant_vector_blas(clover+j*(4*Ls+2)+4*Ls, nc2, -1.0, volume);
+
+    // -P_-
+    constant_vector_blas(clover+j*(4*Ls+2)+2*Ls+3, nc2, -1.0, volume);
+  }
+
+  // And the beautiful mass.
+  // -mP_-
+  constant_vector_blas(clover+(2*Ls-1)*2*Ls+1, nc2, -mass, volume);
+
+  // -m P_+
+  constant_vector_blas(clover+(2*Ls-2), nc2, -mass, volume);
+
 
   // Kill rbjacobi, dagger links if they exist.
   if (built_dagger)
