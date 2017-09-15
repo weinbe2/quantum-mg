@@ -16,6 +16,7 @@ using namespace std;
 #include "inverters/generic_bicgstab_l.h"
 #include "inverters/generic_tfqmr.h"
 #include "inverters/generic_cg.h"
+#include "inverters/generic_gcr.h"
 
 // QMG
 #include "lattice/lattice.h"
@@ -166,6 +167,7 @@ int main(int argc, char** argv)
   double tol = 1e-10;
   int bicgstab_l = Ls;
   double explicit_resid = 0.0; // to be filled later.
+  int restart_freq = 4;
 
   // Drop a point on the rhs on an even site, get norm.
   init_rhs[lat->cv_coord_to_index(x_len/2, y_len/2, 0)] = 1.0;
@@ -292,6 +294,34 @@ int main(int argc, char** argv)
   dwf_stencil->apply_M(check, lhs);
   explicit_resid = sqrt(diffnorm2sq(init_rhs, check, cv_size))/rhs_norm;
   cout << "[QMG-TEST-CG]: The relative error is " << explicit_resid << "\n";
+  delete verb;
+
+  /////////
+  // GCR //
+  /////////
+  copy_vector(lhs, init_guess, cv_size);
+  copy_vector(rhs, init_rhs, cv_size);
+  verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-GCR-INFO]: "));
+  invif = minv_vector_gcr_restart(lhs, rhs, cv_size, max_iter, tol, restart_freq, apply_stencil_2D_M_dagger_M, (void*)dwf_stencil, verb);
+  // Check results.
+  if (invif.success == true)
+  {
+    cout << "[QMG-TEST-GCR]: Algorithm " << invif.name << " took " << invif.iter
+      << " iterations to reach a tolerance of "
+      << sqrt(invif.resSq)/rhs_norm << "\n";
+  }
+  else // failed, maybe.
+  {
+    cout << "[QMG-TEST-GCR]: Potential Error! Algorithm " << invif.name
+      << " took " << invif.iter << " iterations to reach a tolerance of "
+      << sqrt(invif.resSq)/rhs_norm << "\n";
+  }
+  cout << "[QMG-TEST-GCR]: Computing [check] = A [lhs] as a confirmation.\n";
+  // Check and make sure we get the right answer.
+  zero_vector(check, cv_size);
+  dwf_stencil->apply_M(check, lhs);
+  explicit_resid = sqrt(diffnorm2sq(init_rhs, check, cv_size))/rhs_norm;
+  cout << "[QMG-TEST-GCR]: The relative error is " << explicit_resid << "\n";
   delete verb;
   
   // Clean up.

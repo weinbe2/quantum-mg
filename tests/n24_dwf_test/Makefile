@@ -12,7 +12,7 @@ C_EXAMPLES_OBJ = dwf_test.o
 
 CCX = g++
 #CXXFLAGS =   -std=c99 -g -O2  
-CXXFLAGS = -O2 -g -Wall -std=c++11 -I../../ -I../../../quantum-linalg/
+CXXFLAGS = -O2 -g -Wall -std=c++11 -I../../ -I../../../quantum-linalg/ -DQLINALG_TEMPLATING
 
 
 #  = -DHAVE_CONFIG_H -I   -g -O2  -MT
