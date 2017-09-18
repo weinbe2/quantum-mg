@@ -44,7 +44,7 @@ int main(int argc, char** argv)
   const int dof = 2*Ls;
 
 
-  const double mass = 0.1;
+  const double mass = 0.02;
 
   bool do_free = false;
 
@@ -168,6 +168,7 @@ int main(int argc, char** argv)
   int bicgstab_l = Ls;
   double explicit_resid = 0.0; // to be filled later.
   int restart_freq = 4;
+  int restart_freq_2 = 16;
 
   // Drop a point on the rhs on an even site, get norm.
   init_rhs[lat->cv_coord_to_index(x_len/2, y_len/2, 0)] = 1.0;
@@ -296,32 +297,88 @@ int main(int argc, char** argv)
   cout << "[QMG-TEST-CG]: The relative error is " << explicit_resid << "\n";
   delete verb;
 
-  /////////
-  // GCR //
-  /////////
+  ////////////
+  // GCR(4) //
+  ////////////
   copy_vector(lhs, init_guess, cv_size);
   copy_vector(rhs, init_rhs, cv_size);
-  verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-GCR-INFO]: "));
-  invif = minv_vector_gcr_restart(lhs, rhs, cv_size, max_iter, tol, restart_freq, apply_stencil_2D_M_dagger_M, (void*)dwf_stencil, verb);
+  verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-GCR(4)-INFO]: "));
+  invif = minv_vector_gcr_restart(lhs, rhs, cv_size, 2*max_iter, tol, restart_freq, apply_stencil_2D_M, (void*)dwf_stencil, verb);
   // Check results.
   if (invif.success == true)
   {
-    cout << "[QMG-TEST-GCR]: Algorithm " << invif.name << " took " << invif.iter
+    cout << "[QMG-TEST-GCR(4)]: Algorithm " << invif.name << " took " << invif.iter
       << " iterations to reach a tolerance of "
       << sqrt(invif.resSq)/rhs_norm << "\n";
   }
   else // failed, maybe.
   {
-    cout << "[QMG-TEST-GCR]: Potential Error! Algorithm " << invif.name
+    cout << "[QMG-TEST-GCR(4)]: Potential Error! Algorithm " << invif.name
       << " took " << invif.iter << " iterations to reach a tolerance of "
       << sqrt(invif.resSq)/rhs_norm << "\n";
   }
-  cout << "[QMG-TEST-GCR]: Computing [check] = A [lhs] as a confirmation.\n";
+  cout << "[QMG-TEST-GCR(4)]: Computing [check] = A [lhs] as a confirmation.\n";
   // Check and make sure we get the right answer.
   zero_vector(check, cv_size);
   dwf_stencil->apply_M(check, lhs);
   explicit_resid = sqrt(diffnorm2sq(init_rhs, check, cv_size))/rhs_norm;
-  cout << "[QMG-TEST-GCR]: The relative error is " << explicit_resid << "\n";
+  cout << "[QMG-TEST-GCR(4)]: The relative error is " << explicit_resid << "\n";
+  delete verb;
+
+  /////////////
+  // GCR(16) //
+  /////////////
+  copy_vector(lhs, init_guess, cv_size);
+  copy_vector(rhs, init_rhs, cv_size);
+  verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-GCR(16)-INFO]: "));
+  invif = minv_vector_gcr_restart(lhs, rhs, cv_size, 2*max_iter, tol, restart_freq_2, apply_stencil_2D_M, (void*)dwf_stencil, verb);
+  // Check results.
+  if (invif.success == true)
+  {
+    cout << "[QMG-TEST-GCR(16)]: Algorithm " << invif.name << " took " << invif.iter
+      << " iterations to reach a tolerance of "
+      << sqrt(invif.resSq)/rhs_norm << "\n";
+  }
+  else // failed, maybe.
+  {
+    cout << "[QMG-TEST-GCR(16)]: Potential Error! Algorithm " << invif.name
+      << " took " << invif.iter << " iterations to reach a tolerance of "
+      << sqrt(invif.resSq)/rhs_norm << "\n";
+  }
+  cout << "[QMG-TEST-GCR(16)]: Computing [check] = A [lhs] as a confirmation.\n";
+  // Check and make sure we get the right answer.
+  zero_vector(check, cv_size);
+  dwf_stencil->apply_M(check, lhs);
+  explicit_resid = sqrt(diffnorm2sq(init_rhs, check, cv_size))/rhs_norm;
+  cout << "[QMG-TEST-GCR(16)]: The relative error is " << explicit_resid << "\n";
+  delete verb;
+
+  //////////////
+  // GCR(128) //
+  //////////////
+  copy_vector(lhs, init_guess, cv_size);
+  copy_vector(rhs, init_rhs, cv_size);
+  verb = new inversion_verbose_struct(VERB_DETAIL, std::string("[QMG-TEST-GCR(128)-INFO]: "));
+  invif = minv_vector_gcr_restart(lhs, rhs, cv_size, 2*max_iter, tol, 128, apply_stencil_2D_M, (void*)dwf_stencil, verb);
+  // Check results.
+  if (invif.success == true)
+  {
+    cout << "[QMG-TEST-GCR(128)]: Algorithm " << invif.name << " took " << invif.iter
+      << " iterations to reach a tolerance of "
+      << sqrt(invif.resSq)/rhs_norm << "\n";
+  }
+  else // failed, maybe.
+  {
+    cout << "[QMG-TEST-GCR(128)]: Potential Error! Algorithm " << invif.name
+      << " took " << invif.iter << " iterations to reach a tolerance of "
+      << sqrt(invif.resSq)/rhs_norm << "\n";
+  }
+  cout << "[QMG-TEST-GCR(128)]: Computing [check] = A [lhs] as a confirmation.\n";
+  // Check and make sure we get the right answer.
+  zero_vector(check, cv_size);
+  dwf_stencil->apply_M(check, lhs);
+  explicit_resid = sqrt(diffnorm2sq(init_rhs, check, cv_size))/rhs_norm;
+  cout << "[QMG-TEST-GCR(128)]: The relative error is " << explicit_resid << "\n";
   delete verb;
   
   // Clean up.

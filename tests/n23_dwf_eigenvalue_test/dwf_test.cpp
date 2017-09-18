@@ -31,15 +31,15 @@ int main(int argc, char** argv)
   std::mt19937 generator (1337u);
 
   // Basic information.
-  const int x_len = 8;
-  const int y_len = 8;
+  const int x_len = 12;
+  const int y_len = 12;
   const double beta = 6.0;
   const int Ls = 4;
   const double M5 = -1.0;
   const int dof = 2*Ls;
 
 
-  const double mass = 0.1;
+  const double mass = 0.02;
 
   bool do_free = true;
 
