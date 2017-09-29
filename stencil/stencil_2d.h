@@ -633,6 +633,31 @@ public:
       }
     }
   }
+
+  ////////////////////////
+  // Update the shifts. //
+  ////////////////////////
+  void update_shifts(complex<double> in_shift, complex<double> in_eo_shift, complex<double> in_dof_shift)
+  {
+    shift = shift_backup = in_shift;
+    eo_shift = eo_shift_backup = in_eo_shift;
+    dof_shift = dof_shift_backup = in_dof_shift;
+  }
+
+  void update_shift(complex<double> in_shift)
+  {
+    shift = shift_backup = in_shift;
+  }
+
+  void update_eo_shift(complex<double> in_eo_shift)
+  {
+    eo_shift = eo_shift_backup = in_eo_shift;
+  }
+
+  void update_dof_shift(complex<double> in_dof_shift)
+  {
+    dof_shift = dof_shift_backup = in_dof_shift;
+  }
       
   // Need functions to apply M_{clover}, M_{eo}, M_{oe}, M_{twolink}, M_{corner}, M_{shift}
   //   and, of course, all. 
@@ -1101,6 +1126,7 @@ public:
       std::swap(hopping, dagger_hopping);
       std::swap(twolink, dagger_twolink);
       std::swap(corner, dagger_corner);
+
       shift = std::conj(shift);
       eo_shift = std::conj(eo_shift);
       dof_shift = std::conj(dof_shift);
