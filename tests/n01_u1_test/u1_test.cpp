@@ -24,9 +24,6 @@ int main(int argc, char** argv)
   int n_iter = 3; 
   std::mt19937 generator (1337u);
 
-  // Some iterators.
-  int i, j, x, y;
-
   // Create a lattice object. 
   Lattice2D* lat = new Lattice2D(x_len, y_len, 1);
 
@@ -77,6 +74,17 @@ int main(int argc, char** argv)
   apply_gauge_trans_u1(field2, trans1, lat);
 
   cout << "After a random gauge transform, the average plaquette is " << get_plaquette_u1(field2, lat) << " and topology " << get_topo_u1(field2, lat) << "\n";
+
+  // Creating a rather smooth field.
+  cout << "Creating a rather smooth field for instanton tests.\n";
+  gauss_gauge_u1(field2, lat, generator, 6.0);
+
+  cout << "The smooth field has average plaquette " << get_plaquette_u1(field2, lat) << " and topology " << get_topo_u1(field2, lat) << "\n";
+
+  // Create an instanton with charge 1, check plaquette and topology.
+  create_instanton_u1(field2, lat, 1, x_len/2, y_len/2);
+
+  cout << "After adding an instanton with charge 1, the average plaquette is " << get_plaquette_u1(field2, lat) << " and topology " << get_topo_u1(field2, lat) << "\n";
 
   // Clean up.
   deallocate_vector(&field1);

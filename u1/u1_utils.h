@@ -469,6 +469,36 @@ double get_topo_u1(complex<double>* gauge_field, Lattice2D* lat)
 
 }
 
+// Create an instanton.
+void create_instanton_u1(complex<double>* gauge_field, Lattice2D* lat, int Q, const int x0, const int y0)
+{
+  if (lat->get_nc() != 1)
+  {
+    cout << "[QMG-ERROR]: U1 gauge functions require Nc = 1 lattice.\n";
+    return;
+  }
+
+  const int xlen = lat->get_dim_mu(0);
+  const int ylen = lat->get_dim_mu(1);
+
+  // Unfortunately, we break our data parallel setup 
+  // when we create an instanton. It'd be too much of a headache
+  // (for now) to stick to it.
+  for (int x = 0; x < xlen; x++)
+  {
+    for (int y = 0; y < ylen; y++)
+    {
+      // This is for an instanton at the origin.
+      double rx = x - xlen/2 + 0.5;
+      double ry = y - ylen/2 + 0.5;
+
+      // Center the instanton appropriately.
+      gauge_field[lat->gauge_coord_to_index((x-xlen/2+x0+3*xlen)%xlen, (y-ylen/2+y0+3*ylen)%ylen, 0, 0, 0)] *= polar(1.0, Q*ry/(rx*rx+ry*ry));
+      gauge_field[lat->gauge_coord_to_index((x-xlen/2+x0+3*xlen)%xlen, (y-ylen/2+y0+3*ylen)%ylen, 0, 0, 1)] *= polar(1.0, -Q*rx/(rx*rx+ry*ry));
+    }
+  }
+}
+
 // Perform a non-compact heatbath phase update.
 // sqrt{PI/beta} exp( -beta * [(theta + 1/2(staple1+ staple2))^2 + const])
 void heatbath_noncompact_update(double* phase_field, Lattice2D* lat, double beta, int n_update, std::mt19937 &generator)
