@@ -469,6 +469,40 @@ double get_topo_u1(complex<double>* gauge_field, Lattice2D* lat)
 
 }
 
+// Go to Lorentz gauge
+void lorentz_gauge_fix_u1(complex<double>* gauge_field, Lattice2D* lat, const double delta, const double tol, const int max_iter)
+{
+  if (lat->get_nc() != 1)
+  {
+    cout << "[QMG-ERROR]: U1 gauge functions require Nc = 1 lattice.\n";
+    return;
+  }
+
+  const int cm_size = lat->get_size_cm();
+
+  // Oi. Create a U(1) field.
+  complex<double>* phi = allocate_vector<complex<double>>(cm_size);
+  constant_vector(phi, 1.0, cm_size);
+
+  // Create a derivative field.
+  complex<double>* deriv_phi = allocate_vector<complex<double>>(cm_size);
+  constant_vector(deriv_phi, 0.0, cm_size);
+
+  // Meh.
+  double resid = 1.0;
+
+  while (resid > tol)
+  {
+    // Build the derivative with respect to theta.
+    
+  }
+
+  // Clean up.
+  deallocate_vector(&phi);
+  deallocate_vector(&deriv_phi);
+
+}
+
 // Create an instanton.
 void create_instanton_u1(complex<double>* gauge_field, Lattice2D* lat, int Q, const int x0, const int y0)
 {
