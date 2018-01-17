@@ -25,7 +25,7 @@ using namespace std;
 
 int main(int argc, char** argv)
 {
-  if (argc != 4)
+  if (argc != 4 && argc != 5)
   {
     std::cout << "Error: ./staggered_circle expects three arguments, L, mass, beta.\n";
     return -1;
@@ -37,8 +37,13 @@ int main(int argc, char** argv)
   // Iterators and such.
   int i;
 
+  // Get a random seed from the command line
+  unsigned int seed = 1337u;
+  if (argc == 5)
+    seed = atoi(argv[4]);
+
   // Random number generator.
-  std::mt19937 generator (1337u);
+  std::mt19937 generator (seed);
 
   // Basic information for fine level.
   const int x_len = stoi(argv[1]);
@@ -126,6 +131,9 @@ int main(int argc, char** argv)
     else
       need_heatbath = true;
 
+    // Hardcode
+    need_heatbath = true;
+
     if (need_heatbath)
     {
       std::cout << "[QMG-NOTE]: L = " << x_len << " beta = " << beta << " requires heatbath generation.\n";
@@ -133,7 +141,8 @@ int main(int argc, char** argv)
       int n_therm = 4000; // how many heatbath steps to perform.
       int n_meas = 100; // how often to measure the plaquette, topo.
       double* phases = allocate_vector<double>(lat_gauge->get_size_gauge());
-      zero_vector(phases, lat_gauge->get_size_gauge());
+      random_uniform(phases, lat_gauge->get_size_gauge(), generator, -3.1415926535, 3.1415926535);
+      //zero_vector(phases, lat_gauge->get_size_gauge());
       double plaq = 0.0; // track along the way
       double topo = 0.0;
       for (i = 0; i < n_therm; i += n_meas)
