@@ -82,6 +82,9 @@ public:
     // Number of iterations for presmoother
     int pre_iters;
 
+    // Use CGNE for the smoother instead of MR
+    bool pre_cgne;
+
     // What solver to use, relaxation params, other params,
     // preconditioning...
 
@@ -93,13 +96,16 @@ public:
     // Number of iterations for presmoother
     int post_iters;
 
+    // Use CGNE for the smoother instead of MR
+    bool post_cgne;
+
     // By default, there's "no" stopping condition.
     LevelSolveMG()
       : fine_stencil_app(QMG_MATVEC_ORIGINAL), 
         intermediate_tol(1e-20), intermediate_iters(10000000),
         intermediate_restart_freq(32),
-        pre_tol(1e-20), pre_iters(1000000),
-        post_tol(1e-20), post_iters(1000000)
+        pre_tol(1e-20), pre_iters(1000000), pre_cgne(false),
+        post_tol(1e-20), post_iters(1000000), post_cgne(false)
     { ; }
 
   };
@@ -775,8 +781,10 @@ public:
     }
     int n_pre_smooth = level_solve->pre_iters;
     double pre_smooth_tol = level_solve->pre_tol;
+    bool pre_smooth_cgne = level_solve->pre_cgne;
     int n_post_smooth = level_solve->post_iters;
     double post_smooth_tol = level_solve->post_tol;
+    bool post_smooth_cgne = level_solve->post_cgne;
 
     // Function for what type of fine apply we need to do.
     QMGStencilType fine_stencil_type = level_solve->fine_stencil_app;
@@ -833,17 +841,32 @@ public:
     complex<double>* r1 = fine_storage->check_out(); // gets initialized in the next code block
     if (n_pre_smooth > 0)
     {
-      //invif = minv_vector_gcr_restart(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_fine_M, (void*)fine_stencil);
-      invif = minv_vector_minres(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, 0.85, apply_fine_M, (void*)fine_stencil);
+      if (pre_smooth_cgne && (fine_stencil_type == QMG_MATVEC_ORIGINAL || fine_stencil_type == QMG_MATVEC_RIGHT_JACOBI))
+      {
+        complex<double>* z1_prec = fine_storage->check_out();
+        zero_vector(z1_prec, fine_size);
+        invif = minv_vector_minres(z1_prec, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, 0.85,
+                  Stencil2D::get_apply_function(fine_stencil_type == QMG_MATVEC_ORIGINAL ? QMG_MATVEC_M_MDAGGER : QMG_MATVEC_RBJ_M_MDAGGER), (void*)fine_stencil);
+        fine_stencil->apply_M(z1, z1_prec, fine_stencil_type == QMG_MATVEC_ORIGINAL ? QMG_MATVEC_DAGGER : QMG_MATVEC_RBJ_DAGGER);
+        mg_object->add_tracker_count(QMG_DSLASH_TYPE_PRESMOOTH, 2*invif.ops_count+1, level); // smoother ops + residual. 
+        fine_storage->check_in(z1_prec);
+      }
+      else
+      {
+        //invif = minv_vector_gcr_restart(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_fine_M, (void*)fine_stencil);
+        invif = minv_vector_minres(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, 0.85, apply_fine_M, (void*)fine_stencil);
+        mg_object->add_tracker_count(QMG_DSLASH_TYPE_PRESMOOTH, invif.ops_count, level); // smoother ops + residual. 
+      }
       zero_vector(Atmp, fine_size);
       fine_stencil->apply_M(Atmp, z1, fine_stencil_type);
-      mg_object->add_tracker_count(QMG_DSLASH_TYPE_PRESMOOTH, invif.ops_count+1, level); // smoother ops + residual. 
+      mg_object->add_tracker_count(QMG_DSLASH_TYPE_PRESMOOTH, 1, level); // smoother ops + residual. 
       caxpbyz(1.0, rhs, -1.0, Atmp, r1, fine_size_solve);
     }
     else
     {
       zero_vector(Atmp, fine_size_solve);
       copy_vector(r1, rhs, fine_size_solve);
+      copy_vector(z1, rhs, fine_size_solve);
     }
 
     // Next stop: restrict, prep for coarse solve, recurse (or coarsest solve), prolong.
@@ -994,22 +1017,41 @@ public:
     fine_storage->check_in(z1);
     fine_storage->check_in(z2);
 
-    // Last stop, post smooth. Form r2 = r - A(z1 + z2) = r - Ae, solve A z3 = r2.
-    zero_vector(Atmp, fine_size);
-    fine_stencil->apply_M(Atmp, lhs, fine_stencil_type);
-    complex<double>* r2 = fine_storage->check_out();
-    caxpbyz(1.0, rhs, -1.0, Atmp, r2, fine_size_solve);
-    complex<double>* z3 = fine_storage->check_out();
-    zero_vector(z3, fine_size);
-    //invif = minv_vector_gcr(z3, r2, fine_size_solve, n_post_smooth, post_smooth_tol, apply_fine_M, (void*)fine_stencil);
-    invif = minv_vector_minres(z3, r2, fine_size_solve, n_post_smooth, post_smooth_tol, 0.85, apply_fine_M, (void*)fine_stencil);
-    mg_object->add_tracker_count(QMG_DSLASH_TYPE_POSTSMOOTH, invif.ops_count+1, level); // smoother ops + residual
-    cxpy(z3, lhs, fine_size_solve);
+    if (n_post_smooth > 0)
+    {
+      // Last stop, post smooth. Form r2 = r - A(z1 + z2) = r - Ae, solve A z3 = r2.
+      zero_vector(Atmp, fine_size);
+      fine_stencil->apply_M(Atmp, lhs, fine_stencil_type);
+      complex<double>* r2 = fine_storage->check_out();
+      caxpbyz(1.0, rhs, -1.0, Atmp, r2, fine_size_solve);
+      complex<double>* z3 = fine_storage->check_out();
+      zero_vector(z3, fine_size);
 
-    // Check vectors back in.
+      if (post_smooth_cgne && (fine_stencil_type == QMG_MATVEC_ORIGINAL || fine_stencil_type == QMG_MATVEC_RIGHT_JACOBI))
+      {
+        complex<double>* z3_prec = fine_storage->check_out();
+        zero_vector(z3_prec, fine_size);
+        invif = minv_vector_minres(z3_prec, r2, fine_size_solve, n_post_smooth, post_smooth_tol, 0.85,
+                  Stencil2D::get_apply_function(fine_stencil_type == QMG_MATVEC_ORIGINAL ? QMG_MATVEC_M_MDAGGER : QMG_MATVEC_RBJ_M_MDAGGER), (void*)fine_stencil);
+        fine_stencil->apply_M(z3, z3_prec, fine_stencil_type == QMG_MATVEC_ORIGINAL ? QMG_MATVEC_DAGGER : QMG_MATVEC_RBJ_DAGGER);
+        mg_object->add_tracker_count(QMG_DSLASH_TYPE_POSTSMOOTH, 2*(invif.ops_count)+1, level); // smoother ops + residual
+        fine_storage->check_in(z3_prec);
+      }
+      else
+      {
+        //invif = minv_vector_gcr_restart(z1, rhs, fine_size_solve, n_pre_smooth, pre_smooth_tol, coarse_restart, apply_fine_M, (void*)fine_stencil);
+        invif = minv_vector_minres(z3, r2, fine_size_solve, n_post_smooth, post_smooth_tol, 0.85, apply_fine_M, (void*)fine_stencil);
+        mg_object->add_tracker_count(QMG_DSLASH_TYPE_POSTSMOOTH, invif.ops_count, level); // smoother ops + residual
+      }
+      
+      cxpy(z3, lhs, fine_size_solve);
+
+      // Check vectors back in.
+      
+      fine_storage->check_in(r2);
+      fine_storage->check_in(z3);
+    }
     fine_storage->check_in(Atmp);
-    fine_storage->check_in(r2);
-    fine_storage->check_in(z3);
 
     //cout << "Exited level " << level << "\n" << flush;
   }
