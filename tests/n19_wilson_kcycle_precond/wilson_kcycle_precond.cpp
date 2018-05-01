@@ -31,10 +31,6 @@ using namespace std;
 
 
 
-// Forward declare mg preconditioner using dwf operator.
-void dwf_mg_preconditioner(complex<double>* lhs, complex<double>* rhs, int size, void* extra_data, inversion_verbose_struct* verb);
-
-
 int main(int argc, char** argv)
 {
   // Iterators.

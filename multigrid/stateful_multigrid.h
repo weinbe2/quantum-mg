@@ -8,6 +8,9 @@
 // This way we can track the number of operator applications over 
 // the entire solve. 
 
+#ifndef QMG_STATEFUL_MG
+#define QMG_STATEFUL_MG
+
 #include <map>
 
 // QLINALG
@@ -1058,4 +1061,4 @@ public:
 
 };
 
-
+#endif // QMG_STATEFUL_MG
