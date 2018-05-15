@@ -54,7 +54,7 @@ public:
 
     // Build the dense 
     gamma5_dense_mat = allocate_vector<complex<double>>(lat->get_nc()*lat->get_nc());
-    for (int i = 0; i < Ls*Ls; i++) {
+    for (int i = 0; i < 4*Ls*Ls; i++) {
       gamma5_dense_mat[i] = 0.0;
     }
 

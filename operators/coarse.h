@@ -74,7 +74,11 @@ public:
   // Base constructor to set up a bare stencil.
   CoarseOperator2D(Lattice2D* in_lat, int pieces, bool is_chiral, QMGDefaultChirality def_chiral = QMG_CHIRALITY_NONE, complex<double> in_shift = 0.0, complex<double> in_eo_shift = 0.0, complex<double> in_dof_shift = 0.0)
     : Stencil2D(in_lat, pieces, in_shift, in_eo_shift, in_dof_shift), is_chiral(is_chiral), use_rbjacobi(false), in_transfer(0), default_chirality(def_chiral), sigma_1_L(0), sigma_1_R(0)
-  { ; }
+  {
+    tmp_coarse = nullptr;
+    tmp_fine = nullptr;
+    tmp_Afine = nullptr;
+  }
 
   // Base constructor to build a coarse stencil from a fine stencil.
   // NOTE! Need a way to determine QMG_PIECE_... based on the
@@ -468,9 +472,9 @@ public:
 
   ~CoarseOperator2D()
   {
-    deallocate_vector(&tmp_coarse);
-    deallocate_vector(&tmp_fine);
-    deallocate_vector(&tmp_Afine);
+    if (tmp_coarse != 0) deallocate_vector(&tmp_coarse);
+    if (tmp_coarse != 0) deallocate_vector(&tmp_fine);
+    if (tmp_coarse != 0) deallocate_vector(&tmp_Afine);
 
     if (sigma_1_L != 0)
       deallocate_vector(&sigma_1_L);
