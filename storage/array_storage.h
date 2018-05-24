@@ -123,7 +123,35 @@ public:
     return n_checked; 
   }
 
-  // To do: Add 'consolidate'. Free un-allocated arrays down to some minimum.
+  // Consolidate memory that isn't checked out, with some minimum
+  // number of allocated arrays
+  void consolidate(int minimum = 1) {
+
+    // Loop _backwards_ through all allocated vectors
+    for (int i = allocated_arrays-1; i > 0; i--) {
+
+      // Make sure we have the minimum number of arrays
+      // allocated
+      if (allocated_arrays <= minimum) {
+        break;
+      }
+
+      // Clear memory
+      if (!is_checked_out[i]) {
+        deallocate_vector(&arrays[i]);
+        arrays.erase(arrays.begin()+i);
+        is_checked_out.erase(is_checked_out.begin()+i);
+        n_checked--;
+        allocated_arrays--;
+      }
+
+    }
+
+    // Sanity check
+    if ((int)arrays.size() != allocated_arrays || (int)is_checked_out.size() != allocated_arrays) {
+      cout << "[QMG-ERROR]: In array storage, the array size doesn't match the number of allegedly allocated arrays.\n";
+    }
+  }
 };
 
 
