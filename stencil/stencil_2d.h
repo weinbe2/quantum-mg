@@ -660,7 +660,36 @@ public:
   }
       
   // Need functions to apply M_{clover}, M_{eo}, M_{oe}, M_{twolink}, M_{corner}, M_{shift}
-  //   and, of course, all. 
+  //   and, of course, all.
+
+  // note: doesn't apply all shifts...
+  void apply_M_ee(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (clover == 0)
+      return;
+
+    const int nc = lat->get_nc();
+    const int half_vol = lat->get_volume()/2;
+    const int half_size_cv = lat->get_size_cv()/2;
+
+    cMATxpy(clover, rhs, lhs, half_vol, nc, nc);
+    caxpy(shift, rhs, lhs, half_size_cv);
+  }
+
+  // note: doesn't apply all shifts...
+  void apply_M_oo(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (clover == 0)
+      return;
+
+    const int nc = lat->get_nc();
+    const int half_vol = lat->get_volume()/2;
+    const int half_size_cv = lat->get_size_cv()/2;
+    const int half_size_cm = lat->get_size_cm()/2;
+
+    cMATxpy(clover+half_size_cm, rhs+half_size_cv, lhs+half_size_cv, half_vol, nc, nc);
+    caxpy(shift, rhs+half_size_cv, lhs+half_size_cv, half_size_cv);
+  }
 
   void apply_M_clover(complex<double>* lhs, complex<double>* rhs)
   {

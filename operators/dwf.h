@@ -29,9 +29,15 @@ protected:
 
   complex<double> mass;
   double M5; 
+
 public:
 
+  // gamma5 shuffles
+  double a[2*Ls];
+  int shuffle[2*Ls];
+
   // It's not efficient, but pre-build Gamma5.
+  // Should just use one of the shuffle blas routines...
   complex<double>* gamma5_dense_mat;
 
 public:
@@ -51,6 +57,14 @@ public:
 
     // Prepare links.
     update_links(gauge_links);
+
+    // Set up the gamma5 shuffles
+    for (int i = 0; i < Ls; i++) {
+      a[2*i] = 1.0;
+      a[2*i+1] = -1.0;
+      shuffle[2*i] = 2*(Ls-1-i);
+      shuffle[2*i+1] = 2*(Ls-1-i)+1;
+    }
 
     // Build the dense 
     gamma5_dense_mat = allocate_vector<complex<double>>(lat->get_nc()*lat->get_nc());
@@ -89,23 +103,14 @@ public:
 
   virtual void gamma5(complex<double>* vec)
   {
-    /*const int nc = lat->get_nc();
-    {
-      for (int c = nc/2; c < nc; c++)
-        cax_blas(-1.0, vec+c, nc, lat->get_size_cv()/nc);
-    }*/
+    cMAT_single_xy(gamma5_dense_mat, vec, tmp_eo_space, lat->get_volume(), 2*Ls, 2*Ls);
+    copy_vector(vec, tmp_eo_space, lat->get_size_cv());
   }
 
   virtual void gamma5(complex<double>* g5_vec, complex<double>* vec)
   {
-    /*const int nc = lat->get_nc();
-    {
-      for (int c = 0; c < nc/2; c++)
-        caxy_blas(1.0, vec+c, nc, g5_vec+c, nc, lat->get_size_cv()/nc);
-
-      for (int c = nc/2; c < nc; c++)
-        caxy_blas(-1.0, vec+c, nc, g5_vec+c, nc, lat->get_size_cv()/nc);
-    }*/
+    caxy_shuffle_pattern(a, shuffle, 2*Ls, vec, g5_vec, lat->get_volume());
+    //cMAT_single_xy(gamma5_dense_mat, vec, g5_vec, lat->get_volume(), 2*Ls, 2*Ls);
   }
 
   // First component per site is up, second component per site is down.
