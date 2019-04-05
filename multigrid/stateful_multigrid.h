@@ -591,7 +591,7 @@ public:
   }
 
   // Reset the tracker at a given level, or all for -1.
-  void reset_tracker(QMGDslashType type, int accum, int i = -1)
+  void reset_tracker(int i = -1)
   {
     if (i == -1)
     {

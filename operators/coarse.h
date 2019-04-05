@@ -473,8 +473,8 @@ public:
   ~CoarseOperator2D()
   {
     if (tmp_coarse != 0) deallocate_vector(&tmp_coarse);
-    if (tmp_coarse != 0) deallocate_vector(&tmp_fine);
-    if (tmp_coarse != 0) deallocate_vector(&tmp_Afine);
+    if (tmp_fine != 0) deallocate_vector(&tmp_fine);
+    if (tmp_Afine != 0) deallocate_vector(&tmp_Afine);
 
     if (sigma_1_L != 0)
       deallocate_vector(&sigma_1_L);

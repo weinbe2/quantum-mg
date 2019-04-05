@@ -1212,6 +1212,44 @@ public:
     perform_swap_dagger();
   }
 
+  void apply_M_dagger_ee(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger_ee, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (dagger_clover == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_dagger_ee, but the dagger clover does not exist.\n";
+      return;
+    }
+
+    perform_swap_dagger();
+    apply_M_ee(lhs, rhs);
+    perform_swap_dagger();
+  }
+
+  void apply_M_dagger_oo(complex<double>* lhs, complex<double>* rhs)
+  {
+    if (!built_dagger)
+    {
+      std::cout << "[QMG-WARNING]: Tried to call apply_M_dagger_oo, but the dagger stencil has not been allocated.\n";
+      return;
+    }
+
+    if (dagger_clover == 0)
+    {
+      cout << "[QMG-WARNING]: Tried to call apply_M_dagger_oo, but the dagger clover does not exist.\n";
+      return;
+    }
+
+    perform_swap_dagger();
+    apply_M_oo(lhs, rhs);
+    perform_swap_dagger();
+  }
+
   void apply_M_dagger_eo(complex<double>* lhs, complex<double>* rhs)
   {
     if (!built_dagger)
