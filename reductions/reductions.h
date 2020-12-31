@@ -20,22 +20,21 @@ using std::polar;
 // Perform a norm2sq on each timeslice of a color vector.
 // This admits a more efficient implementation for Nd > 2.
 // (Nd == 2 has issues because "y" is intertwined with "x".)
-template<typename T> inline void norm2sq_cv_timeslice(T* sum, complex<T>* cv, Lattice2D* lat)
+template<typename T>
+inline void norm2sq_cv_timeslice(typename RealReducer<T>::type* sum, T* cv, Lattice2D* lat)
 {
   int i;
   int x, y, c;
   const int nt = lat->get_dim_mu(lat->get_nd()-1);
   const int size_cv = lat->get_size_cv();
-  complex<T> tmp;
-  T norm2;
+  typename RealReducer<T>::type norm2;
 
   for (i = 0; i < nt; i++)
     sum[i] = 0.0;
 
   for (i = 0; i < size_cv; i++)
   {
-    tmp = cv[i];
-    norm2 = std::real(std::conj(tmp)*tmp);
+    norm2 = std::real(std::conj(cv[i])*cv[i]);
     lat->cv_index_to_coord(i, x, y, c);
     sum[y] = sum[y] + norm2;
   }
@@ -44,23 +43,21 @@ template<typename T> inline void norm2sq_cv_timeslice(T* sum, complex<T>* cv, La
 // Perform a re_dot on each timeslice of a color vector.
 // This admits a more efficient implementation for Nd > 2.
 // (Nd == 2 has issues because "y" is intertwined with "x".)
-template<typename T> inline void redot_cv_timeslice(T* sum, complex<T>* cv1, complex<T>* cv2, Lattice2D* lat)
+template<typename T>
+inline void redot_cv_timeslice(typename RealReducer<T>::type* sum, T* cv1, T* cv2, Lattice2D* lat)
 {
   int i;
   int x, y, c;
   const int nt = lat->get_dim_mu(lat->get_nd()-1);
   const int size_cv = lat->get_size_cv();
-  complex<T> tmp1, tmp2;
-  T dot_val;
+  typename RealReducer<T>::type dot_val;
 
   for (i = 0; i < nt; i++)
     sum[i] = 0.0;
 
   for (i = 0; i < size_cv; i++)
   {
-    tmp1 = cv1[i];
-    tmp2 = cv2[i];
-    dot_val = std::real(std::conj(tmp1)*tmp2);
+    dot_val = ComplexBase<T>::real(ComplexBase<T>::conj(cv1[i])*cv2[i]);
     lat->cv_index_to_coord(i, x, y, c);
     sum[y] = sum[y] + dot_val;
   }
@@ -69,23 +66,21 @@ template<typename T> inline void redot_cv_timeslice(T* sum, complex<T>* cv1, com
 // Perform a dot on each timeslice of a color vector.
 // This admits a more efficient implementation for Nd > 2.
 // (Nd == 2 has issues because "y" is intertwined with "x".)
-template<typename T> inline void redot_cv_timeslice(complex<T>* sum, complex<T>* cv1, complex<T>* cv2, Lattice2D* lat)
+template<typename T>
+inline void dot_cv_timeslice(typename Reducer<T>::type* sum, T* cv1, T* cv2, Lattice2D* lat)
 {
   int i;
   int x, y, c;
   const int nt = lat->get_dim_mu(lat->get_nd()-1);
   const int size_cv = lat->get_size_cv();
-  complex<T> tmp1, tmp2;
-  complex<T> dot_val;
+  typename Reducer<T>::type dot_val;
 
   for (i = 0; i < nt; i++)
     sum[i] = 0.0;
 
   for (i = 0; i < size_cv; i++)
   {
-    tmp1 = cv1[i];
-    tmp2 = cv2[i];
-    dot_val = std::conj(tmp1)*tmp2;
+    dot_val = ComplexBase<T>::conj(cv1[i])*cv2[i];
     lat->cv_index_to_coord(i, x, y, c);
     sum[y] = sum[y] + dot_val;
   }

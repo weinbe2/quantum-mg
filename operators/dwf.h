@@ -219,21 +219,22 @@ public:
 
     // Then the clover has a few additional pieces.
     // Off diagonal P_+ and P_-.
+    const double signfix = -1.;
     for (j = 0; j < Ls-1; j++)
     {
       // -P_+
-      constant_vector_blas(clover+j*(4*Ls+2)+4*Ls, nc2, 1.0, volume);
+      constant_vector_blas(clover+j*(4*Ls+2)+4*Ls, nc2, signfix*1.0, volume);
 
       // -P_-
-      constant_vector_blas(clover+j*(4*Ls+2)+2*Ls+3, nc2, 1.0, volume);
+      constant_vector_blas(clover+j*(4*Ls+2)+2*Ls+3, nc2, signfix*1.0, volume);
     }
 
     // And the beautiful mass.
     // mP_-
-    constant_vector_blas(clover+(2*Ls-1)*2*Ls+1, nc2, -mass, volume);
+    constant_vector_blas(clover+(2*Ls-1)*2*Ls+1, nc2, -signfix*mass, volume);
 
     // m P_+
-    constant_vector_blas(clover+(2*Ls-2), nc2, -mass, volume);
+    constant_vector_blas(clover+(2*Ls-2), nc2, -signfix*mass, volume);
 
 
     // Kill rbjacobi, dagger links if they exist.

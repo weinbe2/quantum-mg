@@ -382,6 +382,44 @@ void apply_ape_smear_u1(complex<double>* smeared_field, complex<double>* gauge_f
   deallocate_vector(&cm_shift2);
 }
 
+// Get the non-compact action
+double get_noncompact_action_u1(double* phase_field, double beta, Lattice2D* lat) {
+  if (lat->get_nc() != 1)
+  {
+    cout << "[QMG-ERROR]: U1 gauge functions require Nc = 1 lattice.\n";
+    return -50;
+  }
+
+
+  int size_cm = lat->get_size_cm();
+  double* phase_vec = allocate_vector<double>(size_cm);
+  double* cm_forward = allocate_vector<double>(size_cm);
+
+  // A_x(x)
+  copy_vector(phase_vec, phase_field, size_cm); 
+
+  // A_y(x+xhat)
+  cshift(cm_forward, phase_field + size_cm, QMG_CSHIFT_FROM_XP1, QMG_EO_FROM_EVENODD, 1, lat);
+  caxpy(1.0, cm_forward, phase_vec, size_cm);
+
+  // -A_x(x+yhat)
+  cshift(cm_forward, phase_field, QMG_CSHIFT_FROM_YP1, QMG_EO_FROM_EVENODD, 1, lat);
+  conj_vector(cm_forward, size_cm);
+  caxpy(-1.0, cm_forward, phase_vec, size_cm);
+
+  // -A_y(x)
+  caxpy(-1.0, phase_field + size_cm, phase_vec, size_cm);
+
+  // Sum and normalize.
+  double action = 0.5*beta*norm2sq(phase_vec, size_cm);
+
+  // Clean up.
+  deallocate_vector(&phase_vec);
+  deallocate_vector(&cm_forward);
+
+  return action;
+}
+
 // Get average plaquette. 
 complex<double> get_plaquette_u1(complex<double>* gauge_field, Lattice2D* lat)
 {
@@ -504,7 +542,7 @@ void lorentz_gauge_fix_u1(complex<double>* gauge_field, Lattice2D* lat, const do
 }
 
 // Create an instanton.
-void create_instanton_u1(complex<double>* gauge_field, Lattice2D* lat, int Q, const int x0, const int y0)
+void create_instanton_u1(complex<double>* gauge_field, Lattice2D* lat, double Q, const int x0, const int y0)
 {
   if (lat->get_nc() != 1)
   {
@@ -529,6 +567,37 @@ void create_instanton_u1(complex<double>* gauge_field, Lattice2D* lat, int Q, co
       // Center the instanton appropriately.
       gauge_field[lat->gauge_coord_to_index((x-xlen/2+x0+3*xlen)%xlen, (y-ylen/2+y0+3*ylen)%ylen, 0, 0, 0)] *= polar(1.0, Q*ry/(rx*rx+ry*ry));
       gauge_field[lat->gauge_coord_to_index((x-xlen/2+x0+3*xlen)%xlen, (y-ylen/2+y0+3*ylen)%ylen, 0, 0, 1)] *= polar(1.0, -Q*rx/(rx*rx+ry*ry));
+    }
+  }
+}
+
+// Create a non-compact instanton.
+void create_noncompact_instanton_u1(double* phase_field, Lattice2D* lat, double Q)
+{
+  if (lat->get_nc() != 1)
+  {
+    cout << "[QMG-ERROR]: U1 gauge functions require Nc = 1 lattice.\n";
+    return;
+  }
+
+  const int xlen = lat->get_dim_mu(0);
+  const int ylen = lat->get_dim_mu(1);
+
+  // Unfortunately, we break our data parallel setup 
+  // when we create an instanton. It'd be too much of a headache
+  // (for now) to stick to it.
+  for (int x = 0; x < xlen; x++)
+  {
+    for (int y = 0; y < ylen; y++)
+    {
+      // This is for an instanton at the origin.
+      //double rx = x - xlen/2; // + 0.5;
+      //double ry = y - ylen/2; // + 0.5;
+
+      // Center the instanton appropriately.
+      phase_field[lat->gauge_coord_to_index(x, y, 0, 0, 0)] += -Q*3.1415926535*y/(xlen*ylen); //Q*ry/(rx*rx+ry*ry);
+      if (y == ylen-1)
+        phase_field[lat->gauge_coord_to_index(x, y, 0, 0, 1)] += Q*3.1415926535*x/xlen; //-Q*rx/(rx*rx+ry*ry);
     }
   }
 }
